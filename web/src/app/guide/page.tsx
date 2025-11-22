@@ -421,10 +421,10 @@ export default function GuidePage() {
         {/* Footer */}
         <div className="text-center py-8 text-sm text-workday-muted">
           <p>
-            基于 <a href="https://github.com/dayflow-ai/dayflow" target="_blank" className="text-blue-500 hover:underline">Dayflow</a> 开发
+            参考 <a href="https://github.com/dayflow-ai/dayflow" target="_blank" className="text-blue-500 hover:underline">Dayflow</a> 开发
           </p>
           <p className="mt-2">
-            使用 Python + FastAPI + Next.js 构建
+            使用 Python + FastAPI + Next.js 构建 | 开发工具：<a href="https://claude.ai/code" target="_blank" className="text-blue-500 hover:underline">Claude Code</a>
           </p>
         </div>
       </div>
