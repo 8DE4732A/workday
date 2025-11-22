@@ -92,7 +92,7 @@ def get_client() -> Ark:
 
     return _cached_client
 
-def chat_with_video(video_path: str, prompt: str, model: str = 'ep-20251120104157-fxtrj') -> str:
+def chat_with_video(video_path: str, prompt: str, model: str = 'doubao-seed-1-6-flash-250828') -> str:
     """
     使用视频和提示词调用 LLM API
 
@@ -154,7 +154,7 @@ def chat_with_video(video_path: str, prompt: str, model: str = 'ep-2025112010415
         raise
 
 
-def transcribe_video(video_path: str, prompt: str, model: str = 'ep-20251120104157-fxtrj') -> str:
+def transcribe_video(video_path: str, prompt: str, model: str = 'doubao-seed-1-6-flash-250828') -> str:
     """
     第一阶段：视频转录 - 生成 Observations
 
@@ -177,7 +177,7 @@ def transcribe_video(video_path: str, prompt: str, model: str = 'ep-202511201041
         raise
 
 
-def generate_activity_cards(prompt: str, model: str = 'ep-20251120104157-fxtrj') -> str:
+def generate_activity_cards(prompt: str, model: str = 'doubao-seed-1-6-flash-250828') -> str:
     """
     第二阶段：生成活动卡片 - 基于 Observations
 

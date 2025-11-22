@@ -27,7 +27,7 @@ class AnalysisConfig:
     """分析配置"""
     interval: int = 15
     batch_duration: int = 15
-    model: str = "ep-20251120104157-fxtrj"
+    model: str = "doubao-seed-1-6-flash-250828"
     prompt: str = ""
     debug_mode: bool = False
 
@@ -74,7 +74,7 @@ class Config:
         # Analysis
         'analysis.interval': ('int', 'analysis', '分析间隔（分钟）', 15, False),
         'analysis.batch_duration': ('int', 'analysis', '批次时长（分钟）', 15, False),
-        'analysis.model': ('string', 'analysis', 'AI模型名称', 'ep-20251120104157-fxtrj', False),
+        'analysis.model': ('string', 'analysis', 'AI模型名称', 'doubao-seed-1-6-flash-250828', False),
         'analysis.debug_mode': ('bool', 'analysis', '调试模式（不调用LLM，生成默认总结）', False, False),
 
         # Retention
@@ -292,7 +292,7 @@ class Config:
         return AnalysisConfig(
             interval=self.get('analysis.interval', 15),
             batch_duration=self.get('analysis.batch_duration', 15),
-            model=self.get('analysis.model', 'ep-20251120104157-fxtrj'),
+            model=self.get('analysis.model', 'doubao-seed-1-6-flash-250828'),
             prompt=self.get('analysis.prompt', ''),
             debug_mode=self.get('analysis.debug_mode', False)
         )
