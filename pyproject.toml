@@ -1,0 +1,36 @@
+[project]
+name = "workday"
+version = "0.1.0"
+description = "工作时间记录和分析工具 - 自动记录屏幕活动并使用 AI 生成时间线"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # LLM API
+    "volcengine-python-sdk[ark]>=4.0.34",
+
+    # Web Framework
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+
+    # 配置管理
+    "pyyaml>=6.0",
+
+    # 屏幕录制
+    "mss>=9.0.0",
+    "pillow>=10.0.0",
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
