@@ -1,5 +1,7 @@
 # Workday
 
+![](SCR-20260501.jpeg)
+
 AI 驱动的工作时间追踪工具。自动以 1 FPS 录制屏幕，通过两阶段 LLM 分析生成每日活动时间线。
 
 参考 [Dayflow](https://github.com/dayflow-ai/dayflow) 设计，Python 跨平台实现，桌面 GUI 基于 CustomTkinter。
@@ -26,6 +28,7 @@ uv run workday --version # 查看版本
 ```
 
 启动 GUI 后：
+
 1. 点击左下角「开始录制」开始屏幕录制
 2. 录制数据自动提交后台 AI 分析
 3. 在「时间线」视图查看生成的活动卡片

@@ -1,6 +1,6 @@
 """仪表盘视图 - Token 用量统计"""
 import customtkinter as ctk
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class DashboardView(ctk.CTkFrame):
@@ -68,7 +68,17 @@ class DashboardView(ctk.CTkFrame):
             ctk.CTkLabel(self._header_frame, text=text, font=("", 12, "bold"),
                          width=w, anchor="w").pack(side="left", padx=4, pady=4)
 
-    def _load(self, date: str = None):
+    def _fmt_time(self, utc_str: str) -> str:
+        """将 SQLite UTC 时间字符串转为本地时间显示"""
+        if not utc_str:
+            return ""
+        try:
+            dt = datetime.fromisoformat(utc_str).replace(tzinfo=timezone.utc)
+            return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return utc_str[:16]
+
+    def _load(self, date: str | None = None):
         for w in self._table.winfo_children():
             w.destroy()
 
@@ -95,7 +105,7 @@ class DashboardView(ctk.CTkFrame):
                 row.pack(fill="x", pady=1)
 
                 cols = [
-                    (rec['created_at'][:16] if rec['created_at'] else "", 140),
+                    (self._fmt_time(rec['created_at']), 140),
                     (rec['request_type'], 80),
                     (rec['model'][:18], 140),
                     (str(rec['prompt_tokens']), 90),

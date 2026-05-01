@@ -3,15 +3,14 @@ import json
 import re
 import urllib.request
 
-from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
+from openai import OpenAI
 
 from workday.core.logger import get_logger
 from workday.core.config import get_config
 
 logger = get_logger(__name__)
 
-_cached_client = None
+_cached_client: OpenAI | None = None
 _cached_api_base = None
 _cached_api_key = None
 _db = None
@@ -25,11 +24,11 @@ def _get_db():
     return _db
 
 
-def _record_token_usage(usage, request_type: str, model: str, batch_id: int = None):
+def _record_token_usage(usage, request_type: str, model: str, batch_id: int | None = None):
     try:
         if usage:
-            prompt = getattr(usage, 'input_tokens', 0) or getattr(usage, 'prompt_tokens', 0)
-            completion = getattr(usage, 'output_tokens', 0) or getattr(usage, 'completion_tokens', 0)
+            prompt = getattr(usage, 'prompt_tokens', 0) or 0
+            completion = getattr(usage, 'completion_tokens', 0) or 0
             _get_db().insert_token_usage(
                 request_type=request_type,
                 model=model,
@@ -48,7 +47,7 @@ def clean_json_response(content: str) -> str:
     return match.group(1).strip() if match else content
 
 
-def get_client() -> ChatOpenAI:
+def get_client() -> OpenAI:
     global _cached_client, _cached_api_base, _cached_api_key
 
     cfg = get_config().llm
@@ -59,10 +58,9 @@ def get_client() -> ChatOpenAI:
             or _cached_api_base != api_base
             or _cached_api_key != api_key):
         logger.info("Initializing LLM client")
-        _cached_client = ChatOpenAI(
+        _cached_client = OpenAI(
             base_url=api_base,
             api_key=api_key or "placeholder",
-            model=cfg.model,
         )
         _cached_api_base = api_base
         _cached_api_key = api_key
@@ -89,23 +87,42 @@ def fetch_available_models(api_base: str, api_key: str) -> list[str]:
 def chat_with_video(video_path: str, prompt: str, model: str = '') -> str:
     cfg = get_config().llm
     model = model or cfg.model
+    debug = get_config().analysis.debug_mode
+
     logger.info(f"[chat_with_video] model={model}, video={video_path}")
+    if debug:
+        logger.debug(f"[chat_with_video] prompt=\n{prompt}")
 
     with open(video_path, 'rb') as f:
-        video_base64 = base64.b64encode(f.read()).decode('utf-8')
+        video_bytes = f.read()
+    video_base64 = base64.b64encode(video_bytes).decode('utf-8')
+    logger.info(f"[chat_with_video] video size={len(video_bytes)/1024:.1f}KB, base64={len(video_base64)//1024}KB")
 
     client = get_client()
-    message = HumanMessage(content=[
-        {"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{video_base64}"}},
-        {"type": "text", "text": prompt},
-    ])
-
-    response = client.invoke([message])
-    content = response.content
-    if hasattr(response, 'usage_metadata'):
-        _record_token_usage(response.usage_metadata, 'chat_with_video', model)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "video_url",
+                    "video_url": {"url": f"data:video/mp4;base64,{video_base64}"},
+                    "fps": 1,
+                },
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    )
+    content = response.choices[0].message.content or ""
+    usage = response.usage
+    if usage:
+        _record_token_usage(usage, 'chat_with_video', model)
+        logger.info(f"[chat_with_video] tokens: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
 
     logger.info(f"[chat_with_video] response length={len(content)}")
+    if debug:
+        logger.debug(f"[chat_with_video] response=\n{content}")
+
     return clean_json_response(content)
 
 
@@ -120,12 +137,25 @@ def transcribe_video(video_path: str, prompt: str, model: str = '') -> str:
 def generate_activity_cards(prompt: str, model: str = '') -> str:
     """第二阶段：生成活动卡片 - 基于 Observations"""
     model = model or get_config().llm.model
-    logger.info(f"[generate_activity_cards] model={model}")
+    debug = get_config().analysis.debug_mode
 
-    response = get_client().invoke([HumanMessage(content=prompt)])
-    content = response.content
-    if hasattr(response, 'usage_metadata'):
-        _record_token_usage(response.usage_metadata, 'generate_activity_cards', model)
+    logger.info(f"[generate_activity_cards] model={model}")
+    if debug:
+        logger.debug(f"[generate_activity_cards] prompt=\n{prompt}")
+
+    client = get_client()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    content = response.choices[0].message.content or ""
+    usage = response.usage
+    if usage:
+        _record_token_usage(usage, 'generate_activity_cards', model)
+        logger.info(f"[generate_activity_cards] tokens: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
 
     logger.info(f"[generate_activity_cards] response length={len(content)}")
+    if debug:
+        logger.debug(f"[generate_activity_cards] response=\n{content}")
+
     return clean_json_response(content)
