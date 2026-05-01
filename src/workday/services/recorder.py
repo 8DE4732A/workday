@@ -84,7 +84,7 @@ class ScreenRecorder:
         try:
             with mss.mss() as sct:
                 monitors = sct.monitors
-                logger.info(f"Available monitors: {len(monitors) - 1}")
+                logger.debug(f"Available monitors: {len(monitors) - 1}")
 
                 if self.monitor_index < 0 or self.monitor_index >= len(monitors):
                     logger.error(f"Invalid monitor index {self.monitor_index}, falling back to all monitors (0)")
@@ -93,7 +93,7 @@ class ScreenRecorder:
                 monitor = monitors[self.monitor_index]
 
                 if self.monitor_index == 0:
-                    logger.info(f"Screen recording started - Capturing ALL monitors ({monitor['width']}x{monitor['height']})")
+                    logger.info(f"Screen recording started - ALL monitors ({monitor['width']}x{monitor['height']})")
                 else:
                     logger.info(f"Screen recording started - Monitor {self.monitor_index} ({monitor['width']}x{monitor['height']})")
 
@@ -167,7 +167,7 @@ class ScreenRecorder:
                 chunk_id = self.db.insert_chunk(chunk)
                 static_count = sum(static_flags)
                 total_count = len(static_flags)
-                logger.info(
+                logger.debug(
                     f"Chunk skipped (static screen: {static_count}/{total_count} frames, "
                     f"ratio={static_ratio:.2f})"
                 )
@@ -185,7 +185,7 @@ class ScreenRecorder:
                     status=ChunkStatus.PENDING
                 )
                 chunk_id = self.db.insert_chunk(chunk)
-                logger.info(f"Saved chunk {chunk_id}: {video_path} ({len(self.current_chunk_frames)} frames)")
+                logger.debug(f"Saved chunk {chunk_id}: {video_path} ({len(self.current_chunk_frames)} frames)")
 
             self.current_chunk_frames = []
             self.chunk_start_time = None
@@ -223,7 +223,7 @@ class ScreenRecorder:
                 out.write(bgr_frame)
         finally:
             out.release()
-            logger.info(f"Video saved: {output_path}")
+            logger.debug(f"Video saved: {output_path}")
 
 
 class RecordingManager:

@@ -89,6 +89,7 @@ class SettingsView(ctk.CTkScrollableFrame):
         self._add_section("数据保留", [
             ("retention.days", "保留天数", "int"),
         ])
+        self._build_log_section()
 
         ctk.CTkFrame(self, height=1, fg_color=("gray80", "gray30")).pack(fill="x", padx=16, pady=8)
         ctk.CTkButton(self, text="保存设置", command=self._save, width=120).pack(anchor="w", padx=16, pady=(0, 8))
@@ -98,6 +99,37 @@ class SettingsView(ctk.CTkScrollableFrame):
         ctk.CTkButton(self, text="清空所有数据", fg_color="#ef4444",
                       hover_color="#dc2626", command=self._clear_data,
                       width=120).pack(anchor="w", padx=16, pady=(0, 20))
+
+    def _build_log_section(self):
+        frame = ctk.CTkFrame(self, corner_radius=8)
+        frame.pack(fill="x", padx=16, pady=6)
+
+        ctk.CTkLabel(frame, text="日志设置", font=("", 14, "bold")).pack(anchor="w", padx=12, pady=(10, 6))
+        ctk.CTkFrame(frame, height=1, fg_color=("gray80", "gray30")).pack(fill="x", padx=12)
+
+        row = ctk.CTkFrame(frame, fg_color="transparent")
+        row.pack(fill="x", padx=12, pady=4)
+        ctk.CTkLabel(row, text="文件日志级别", font=("", 12), width=180, anchor="w").pack(side="left")
+
+        self._log_level_var = ctk.StringVar(value="WARNING")
+        levels = ["DEBUG", "INFO", "WARNING", "ERROR"]
+        menu = ctk.CTkOptionMenu(row, variable=self._log_level_var, values=levels, width=160)
+        menu.pack(side="left")
+
+        btn = ctk.CTkButton(
+            row, text="?", width=24, height=24,
+            font=("", 11), fg_color="transparent",
+            text_color=("gray50", "gray60"),
+            hover_color=("gray85", "gray25"),
+            border_width=1, border_color=("gray70", "gray40"),
+            corner_radius=12,
+        )
+        btn.pack(side="left", padx=(6, 0))
+        _Tooltip(btn, "控制写入日志文件的详细程度。\n"
+                      "WARNING（默认）：仅记录警告和错误，磁盘占用最小。\n"
+                      "INFO：记录主要操作流程，适合排查问题。\n"
+                      "DEBUG：记录所有细节含 LLM 内容，仅在调试时使用。\n"
+                      "ERROR：仅记录错误，日志量最少。")
 
     def _build_llm_section(self):
         frame = ctk.CTkFrame(self, corner_radius=8)
@@ -314,6 +346,9 @@ class SettingsView(ctk.CTkScrollableFrame):
             # 模型 ID
             self._model_var.set(cfg.get("llm.model", ""))
 
+            # 日志级别
+            self._log_level_var.set(cfg.get("log.file_level", "WARNING"))
+
             for key, (field_type, widget) in self._widgets.items():
                 if field_type == "bool":
                     widget.set(bool(cfg.get(key, False)))
@@ -341,6 +376,12 @@ class SettingsView(ctk.CTkScrollableFrame):
             model_val = self._model_var.get().strip()
             if model_val:
                 cfg.set("llm.model", model_val)
+
+            # 日志级别：保存并立即生效
+            log_level = self._log_level_var.get()
+            cfg.set("log.file_level", log_level)
+            from workday.core.logger import log_manager
+            log_manager.set_file_log_level(log_level)
 
             for key, (field_type, widget) in self._widgets.items():
                 if field_type == "bool":

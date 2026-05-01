@@ -96,7 +96,7 @@ def chat_with_video(video_path: str, prompt: str, model: str = '') -> str:
     with open(video_path, 'rb') as f:
         video_bytes = f.read()
     video_base64 = base64.b64encode(video_bytes).decode('utf-8')
-    logger.info(f"[chat_with_video] video size={len(video_bytes)/1024:.1f}KB, base64={len(video_base64)//1024}KB")
+    logger.debug(f"[chat_with_video] video size={len(video_bytes)/1024:.1f}KB, base64={len(video_base64)//1024}KB")
 
     client = get_client()
     response = client.chat.completions.create(
@@ -119,7 +119,7 @@ def chat_with_video(video_path: str, prompt: str, model: str = '') -> str:
         _record_token_usage(usage, 'chat_with_video', model)
         logger.info(f"[chat_with_video] tokens: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
 
-    logger.info(f"[chat_with_video] response length={len(content)}")
+    logger.debug(f"[chat_with_video] response length={len(content)}")
     if debug:
         logger.debug(f"[chat_with_video] response=\n{content}")
 
@@ -128,7 +128,7 @@ def chat_with_video(video_path: str, prompt: str, model: str = '') -> str:
 
 def transcribe_video(video_path: str, prompt: str, model: str = '') -> str:
     """第一阶段：视频转录 - 生成 Observations"""
-    logger.info(f"[transcribe_video] video={video_path}, model={model}")
+    logger.info(f"[transcribe_video] start video={video_path}, model={model}")
     result = chat_with_video(video_path, prompt, model)
     logger.info("[transcribe_video] completed")
     return result
@@ -154,7 +154,7 @@ def generate_activity_cards(prompt: str, model: str = '') -> str:
         _record_token_usage(usage, 'generate_activity_cards', model)
         logger.info(f"[generate_activity_cards] tokens: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
 
-    logger.info(f"[generate_activity_cards] response length={len(content)}")
+    logger.debug(f"[generate_activity_cards] response length={len(content)}")
     if debug:
         logger.debug(f"[generate_activity_cards] response=\n{content}")
 

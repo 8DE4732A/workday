@@ -37,6 +37,7 @@ class LogManager:
 
     def __init__(self):
         if not self._initialized:
+            self._file_handler = None
             self._setup_logging()
             LogManager._initialized = True
 
@@ -68,16 +69,19 @@ class LogManager:
         console_handler.addFilter(IgnoreWindowsAsyncioErrorFilter())
         root_logger.addHandler(console_handler)
 
-        file_handler = RotatingFileHandler(
-            log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding='utf-8'
+        # 从配置读取文件日志级别，默认 WARNING（普通用户不需要 DEBUG/INFO）
+        file_log_level = self._load_file_log_level()
+
+        self._file_handler = RotatingFileHandler(
+            log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8'
         )
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(detailed_formatter)
-        file_handler.addFilter(IgnoreWindowsAsyncioErrorFilter())
-        root_logger.addHandler(file_handler)
+        self._file_handler.setLevel(file_log_level)
+        self._file_handler.setFormatter(detailed_formatter)
+        self._file_handler.addFilter(IgnoreWindowsAsyncioErrorFilter())
+        root_logger.addHandler(self._file_handler)
 
         error_file_handler = RotatingFileHandler(
-            error_log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding='utf-8'
+            error_log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8'
         )
         error_file_handler.setLevel(logging.ERROR)
         error_file_handler.setFormatter(detailed_formatter)
@@ -89,6 +93,21 @@ class LogManager:
 
         self.logger = logging.getLogger('workday')
         self.logger.info("=== Workday Application Started ===")
+
+    def _load_file_log_level(self) -> int:
+        """从配置读取文件日志级别，失败时默认 WARNING"""
+        try:
+            from workday.core.config import get_config
+            level_name = get_config().get('log.file_level', 'WARNING')
+            return getattr(logging, str(level_name).upper(), logging.WARNING)
+        except Exception:
+            return logging.WARNING
+
+    def set_file_log_level(self, level_name: str):
+        """动态修改文件日志级别"""
+        level = getattr(logging, level_name.upper(), logging.WARNING)
+        if self._file_handler:
+            self._file_handler.setLevel(level)
 
     def get_logger(self, name: str = None) -> logging.Logger:
         if name:
