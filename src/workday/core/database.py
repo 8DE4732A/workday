@@ -92,6 +92,8 @@ class Database:
             conn.execute("DELETE FROM recording_chunks WHERE end_ts < ?", (cutoff_ts,))
             conn.commit()
             for path in file_paths:
+                if not path:
+                    continue
                 try:
                     Path(path).unlink(missing_ok=True)
                 except Exception as e:
@@ -130,6 +132,29 @@ class Database:
                 (BatchStatus.PENDING,)
             ).fetchall()
             return [self._row_to_batch(row) for row in rows]
+
+    def get_transcribed_batches(self) -> List[Batch]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM batches
+                WHERE status = ?
+                ORDER BY start_ts ASC
+                """,
+                (BatchStatus.TRANSCRIBED,)
+            ).fetchall()
+            return [self._row_to_batch(row) for row in rows]
+
+    def count_observations_for_batches(self, batch_ids: List[int]) -> int:
+        if not batch_ids:
+            return 0
+        with self._get_conn() as conn:
+            placeholders = ",".join("?" * len(batch_ids))
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM observations WHERE batch_id IN ({placeholders})",
+                batch_ids
+            ).fetchone()
+            return row[0]
 
     def get_batches_by_day(self, day: str) -> List[Batch]:
         with self._get_conn() as conn:
@@ -222,6 +247,24 @@ class Database:
                 ORDER BY start_ts ASC
                 """,
                 (start_ts, end_ts)
+            ).fetchall()
+            return [self._row_to_timeline_card(row) for row in rows]
+
+    def get_preceding_timeline_cards(self, before_ts: int, since_ts: int, limit: int) -> List[TimelineCard]:
+        """返回 before_ts 之前、since_ts 之后的卡片，同时满足时间窗口和数量上限（取并集）"""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM timeline_cards
+                WHERE end_ts <= ? AND (start_ts >= ? OR id IN (
+                    SELECT id FROM timeline_cards
+                    WHERE end_ts <= ?
+                    ORDER BY end_ts DESC
+                    LIMIT ?
+                ))
+                ORDER BY start_ts ASC
+                """,
+                (before_ts, since_ts, before_ts, limit)
             ).fetchall()
             return [self._row_to_timeline_card(row) for row in rows]
 

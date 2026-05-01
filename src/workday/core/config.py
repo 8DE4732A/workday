@@ -25,6 +25,8 @@ class RecordingConfig:
     format: str = "jpg"
     output_dir: str = ""
     monitor_index: int = 0
+    static_diff_threshold: float = 2.0
+    static_frame_ratio: float = 0.9
 
 
 @dataclass
@@ -32,6 +34,10 @@ class AnalysisConfig:
     interval: int = 15
     batch_duration: int = 15
     debug_mode: bool = False
+    card_window_minutes: int = 15
+    card_min_observations: int = 5
+    context_window_minutes: int = 60
+    context_max_cards: int = 10
 
 
 @dataclass
@@ -61,9 +67,15 @@ class Config:
         'recording.format': ('string', 'recording', '输出格式 (jpg/png/mp4)', 'jpg', False),
         'recording.output_dir': ('string', 'recording', '输出目录', '', False),
         'recording.monitor_index': ('int', 'recording', '显示器索引 (0=全部, 1=主显示器, 2+=其他)', 0, False),
+        'recording.static_diff_threshold': ('float', 'recording', '静止帧像素差阈值（0-255，越小越敏感）', 2.0, False),
+        'recording.static_frame_ratio': ('float', 'recording', '静止帧比例阈值（0-1，超过则跳过 LLM）', 0.9, False),
         'analysis.interval': ('int', 'analysis', '分析间隔（分钟）', 15, False),
         'analysis.batch_duration': ('int', 'analysis', '批次时长（分钟）', 15, False),
         'analysis.debug_mode': ('bool', 'analysis', '调试模式（不调用LLM，生成默认总结）', False, False),
+        'analysis.card_window_minutes': ('int', 'analysis', 'Stage2 触发时间窗口（分钟，积累满此时长则生成活动卡片）', 15, False),
+        'analysis.card_min_observations': ('int', 'analysis', 'Stage2 触发最少 Observations 数量', 5, False),
+        'analysis.context_window_minutes': ('int', 'analysis', '前序活动卡片时间窗口（分钟，为 Stage2 提供上下文）', 60, False),
+        'analysis.context_max_cards': ('int', 'analysis', '前序活动卡片最大数量', 10, False),
         'retention.days': ('int', 'retention', '数据保留天数', 3, False),
         'database.path': ('string', 'database', '数据库文件路径', '', False),
         'llm.api_base': ('string', 'llm', 'API Base URL', '', False),
@@ -83,7 +95,7 @@ class Config:
 
     @staticmethod
     def is_masked(value: str) -> bool:
-        return '*' in value and value.replace('*', '').strip() != ''
+        return bool(value) and '*' in value
 
     def __init__(self, db_path: str = ""):
         data_dir = get_data_dir()
@@ -116,9 +128,18 @@ class Config:
                 self._init_config_from_defaults()
             else:
                 self._config_cache = db.get_all_configs()
+                self._sanitize_sensitive_keys()
         except Exception as e:
             logging.error(f"Failed to load config from database: {e}, using default values")
             self._load_defaults_only()
+
+    def _sanitize_sensitive_keys(self):
+        """将 cache 中被误存为掩码的敏感字段清空，防止用掩码值调用 API"""
+        for key in self.SENSITIVE_KEYS:
+            value = self._config_cache.get(key, '')
+            if value and self.is_masked(str(value)):
+                logging.warning(f"Detected masked value stored in DB for '{key}', clearing it")
+                self._config_cache[key] = ''
 
     def _init_config_from_defaults(self):
         from workday.core.logger import get_logger
@@ -174,7 +195,9 @@ class Config:
             quality=self.get('recording.quality', 85),
             format=self.get('recording.format', 'jpg'),
             output_dir=self.get('recording.output_dir', self._default_recordings_dir),
-            monitor_index=self.get('recording.monitor_index', 0)
+            monitor_index=self.get('recording.monitor_index', 0),
+            static_diff_threshold=self.get('recording.static_diff_threshold', 2.0),
+            static_frame_ratio=self.get('recording.static_frame_ratio', 0.9),
         )
 
     @property
@@ -182,7 +205,11 @@ class Config:
         return AnalysisConfig(
             interval=self.get('analysis.interval', 15),
             batch_duration=self.get('analysis.batch_duration', 15),
-            debug_mode=self.get('analysis.debug_mode', False)
+            debug_mode=self.get('analysis.debug_mode', False),
+            card_window_minutes=self.get('analysis.card_window_minutes', 15),
+            card_min_observations=self.get('analysis.card_min_observations', 5),
+            context_window_minutes=self.get('analysis.context_window_minutes', 60),
+            context_max_cards=self.get('analysis.context_max_cards', 10),
         )
 
     @property

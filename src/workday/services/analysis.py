@@ -5,7 +5,7 @@
 import json
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
@@ -34,7 +34,7 @@ class AnalysisManager:
 
     @property
     def model(self) -> str:
-        return get_config().analysis.model
+        return get_config().llm.model
 
     def start(self):
         if self.is_running:
@@ -57,25 +57,28 @@ class AnalysisManager:
     def _analysis_loop(self):
         while self.is_running:
             try:
-                self._process_recordings()
+                self._run_stage1()
+                self._run_stage2()
                 self._cleanup_old_data()
             except Exception as e:
                 logger.error(f"Error in analysis loop: {e}", exc_info=True)
             time.sleep(self.check_interval)
 
-    def _process_recordings(self):
+    # ================================================================
+    # Stage 1：视频转录 → Observations，每批 chunk 独立处理
+    # ================================================================
+
+    def _run_stage1(self):
         chunks = self.db.get_pending_chunks()
         if not chunks:
             return
 
-        logger.info(f"Found {len(chunks)} pending chunks to process")
-        batches = self._group_chunks_into_batches(chunks)
-
-        for batch_chunks in batches:
+        logger.info(f"[Stage 1] Found {len(chunks)} pending chunks")
+        for batch_chunks in self._group_chunks_into_batches(chunks):
             try:
-                self._process_batch(batch_chunks)
+                self._transcribe_batch(batch_chunks)
             except Exception as e:
-                logger.error(f"Error processing batch: {e}", exc_info=True)
+                logger.error(f"[Stage 1] Error processing batch: {e}", exc_info=True)
 
     def _group_chunks_into_batches(self, chunks: List) -> List[List]:
         if not chunks:
@@ -97,11 +100,10 @@ class AnalysisManager:
 
         return batches
 
-    def _process_batch(self, chunks: List):
+    def _transcribe_batch(self, chunks: List):
+        """Stage 1：将一批 chunks 转录为 Observations，完成后标记 batch 为 TRANSCRIBED"""
         if not chunks:
             return
-
-        logger.info(f"Processing batch with {len(chunks)} chunks")
 
         start_ts = chunks[0].start_ts
         end_ts = chunks[-1].end_ts
@@ -114,120 +116,237 @@ class AnalysisManager:
             for chunk in chunks:
                 self.db.update_chunk_status(chunk.id, ChunkStatus.PROCESSING)
 
-            if len(chunks) == 1:
-                video_path = chunks[0].file_path
-            else:
-                video_path = self._merge_videos(chunks)
+            # スキップされたチャンクを除外してビデオパスを取得
+            video_chunks = [c for c in chunks if c.file_path]
+            if not video_chunks:
+                logger.info(f"[Stage 1] Batch {batch_id}: all chunks skipped, marking TRANSCRIBED with no observations")
+                self.db.update_batch_status(batch_id, BatchStatus.TRANSCRIBED)
+                for chunk in chunks:
+                    self.db.update_chunk_status(chunk.id, ChunkStatus.COMPLETED)
+                return
 
-            # ========== 阶段 1: 视频转录 ==========
-            logger.info(f"[Stage 1] Transcribing video for batch {batch_id}...")
+            if len(video_chunks) == 1:
+                video_path = video_chunks[0].file_path
+            else:
+                video_path = self._merge_videos(video_chunks)
 
             duration = end_ts - start_ts
-            duration_minutes = int(duration / 60)
-            duration_seconds = int(duration % 60)
-            duration_string = f"{duration_minutes:02d}:{duration_seconds:02d}"
-
+            duration_string = f"{int(duration / 60):02d}:{int(duration % 60):02d}"
             prompt1 = get_transcription_prompt(duration_string)
 
             if get_config().analysis.debug_mode:
-                logger.info("[Stage 1] DEBUG MODE: Skipping LLM call, using default observations")
-                response1 = json.dumps([
-                    {
-                        "startTimestamp": "00:00",
-                        "endTimestamp": duration_string,
-                        "description": f"[调试模式] 默认观察记录 - 批次时间: {datetime.fromtimestamp(start_ts).strftime('%H:%M')} - {datetime.fromtimestamp(end_ts).strftime('%H:%M')}"
-                    }
-                ])
+                logger.info(f"[Stage 1] Batch {batch_id}: DEBUG MODE")
+                response1 = json.dumps([{
+                    "startTimestamp": "00:00",
+                    "endTimestamp": duration_string,
+                    "description": f"[调试模式] 默认观察记录 - {datetime.fromtimestamp(start_ts).strftime('%H:%M')} - {datetime.fromtimestamp(end_ts).strftime('%H:%M')}"
+                }])
             else:
+                logger.info(f"[Stage 1] Transcribing batch {batch_id} ({duration_string})...")
                 response1 = transcribe_video(video_path, prompt1, self.model)
 
             observations_data = self._parse_observations(response1, start_ts)
 
             if not observations_data:
-                logger.warning(f"[Stage 1] Failed: No observations generated for batch {batch_id}")
+                logger.warning(f"[Stage 1] Batch {batch_id}: no observations parsed, marking FAILED")
                 self.db.update_batch_status(batch_id, BatchStatus.FAILED)
                 for chunk in chunks:
                     self.db.update_chunk_status(chunk.id, ChunkStatus.FAILED)
                 return
 
-            observations = []
-            for obs_data in observations_data:
-                obs = Observation(
-                    batch_id=batch_id,
-                    start_ts=obs_data['start_ts'],
-                    end_ts=obs_data['end_ts'],
-                    observation=obs_data['description']
-                )
-                observations.append(obs)
-
+            observations = [
+                Observation(batch_id=batch_id, start_ts=d['start_ts'],
+                            end_ts=d['end_ts'], observation=d['description'])
+                for d in observations_data
+            ]
             self.db.insert_observations(observations)
-            logger.info(f"[Stage 1] Success: Generated {len(observations)} observations")
 
-            # ========== 阶段 2: 生成活动卡片 ==========
-            logger.info(f"[Stage 2] Generating activity cards for batch {batch_id}...")
+            self.db.update_batch_status(batch_id, BatchStatus.TRANSCRIBED)
+            for chunk in chunks:
+                self.db.update_chunk_status(chunk.id, ChunkStatus.COMPLETED)
+
+            logger.info(f"[Stage 1] Batch {batch_id}: {len(observations)} observations, status=TRANSCRIBED")
+
+        except Exception as e:
+            logger.error(f"[Stage 1] Batch {batch_id} failed: {e}", exc_info=True)
+            self.db.update_batch_status(batch_id, BatchStatus.FAILED)
+            for chunk in chunks:
+                self.db.update_chunk_status(chunk.id, ChunkStatus.FAILED)
+
+    # ================================================================
+    # Stage 2：聚合 Observations → Timeline Cards
+    # 触发条件（OR）：
+    #   A. 最早 TRANSCRIBED batch 的 start_ts 距今 >= card_window_minutes
+    #   B. 待处理 observations 总数 >= card_min_observations
+    # ================================================================
+
+    def _run_stage2(self):
+        transcribed = self.db.get_transcribed_batches()
+        if not transcribed:
+            return
+
+        cfg = get_config().analysis
+        card_window_seconds = cfg.card_window_minutes * 60
+        card_min_obs = cfg.card_min_observations
+
+        now = int(time.time())
+        earliest_start = transcribed[0].start_ts
+        elapsed = now - earliest_start
+
+        batch_ids = [b.id for b in transcribed if b.id is not None]
+        obs_count = self.db.count_observations_for_batches(batch_ids)
+
+        time_triggered = elapsed >= card_window_seconds
+        count_triggered = obs_count >= card_min_obs
+
+        if not (time_triggered or count_triggered):
+            logger.debug(
+                f"[Stage 2] Not triggered: elapsed={elapsed}s/{card_window_seconds}s, "
+                f"obs={obs_count}/{card_min_obs}"
+            )
+            return
+
+        trigger_reason = []
+        if time_triggered:
+            trigger_reason.append(f"time ({elapsed}s >= {card_window_seconds}s)")
+        if count_triggered:
+            trigger_reason.append(f"count ({obs_count} >= {card_min_obs})")
+        logger.info(f"[Stage 2] Triggered by: {', '.join(trigger_reason)}")
+
+        self._generate_cards_for_batches(transcribed)
+
+    def _generate_cards_for_batches(self, batches: List):
+        """Stage 2：将一批 TRANSCRIBED batches 的所有 observations 合并生成 Timeline Cards"""
+        if not batches:
+            return
+
+        batch_ids = [b.id for b in batches]
+        start_ts = batches[0].start_ts
+        end_ts = batches[-1].end_ts
+
+        # 标记所有参与的 batch 为 PROCESSING
+        for batch in batches:
+            self.db.update_batch_status(batch.id, BatchStatus.PROCESSING)
+
+        try:
+            observations = []
+            for batch in batches:
+                observations.extend(self.db.get_observations_by_batch(batch.id))
+            observations.sort(key=lambda o: o.start_ts)
+
+            if not observations:
+                logger.warning(f"[Stage 2] No observations found for batches {batch_ids}, marking COMPLETED")
+                for batch in batches:
+                    self.db.update_batch_status(batch.id, BatchStatus.COMPLETED)
+                return
 
             observations_text = self._format_observations(observations)
-            existing_cards_json = "[]"
+            existing_cards_json = self._fetch_context_cards_json(start_ts)
             prompt2 = get_activity_cards_prompt(observations_text, existing_cards_json)
 
             if get_config().analysis.debug_mode:
-                logger.info("[Stage 2] DEBUG MODE: Skipping LLM call, using default activity card")
+                logger.info("[Stage 2] DEBUG MODE")
                 start_time_str = datetime.fromtimestamp(start_ts).strftime("%I:%M %p").lstrip('0')
                 end_time_str = datetime.fromtimestamp(end_ts).strftime("%I:%M %p").lstrip('0')
-                response2 = json.dumps([
-                    {
-                        "startTime": start_time_str,
-                        "endTime": end_time_str,
-                        "category": "其他",
-                        "subcategory": "调试",
-                        "title": "[调试模式] 默认活动",
-                        "summary": "调试模式下生成的默认活动卡片",
-                        "detailedSummary": f"这是调试模式下自动生成的默认活动卡片。时间范围：{start_time_str} - {end_time_str}"
-                    }
-                ])
+                response2 = json.dumps([{
+                    "startTime": start_time_str,
+                    "endTime": end_time_str,
+                    "category": "其他",
+                    "subcategory": "调试",
+                    "title": "[调试模式] 默认活动",
+                    "summary": "调试模式下生成的默认活动卡片",
+                    "detailedSummary": f"调试模式，时间范围：{start_time_str} - {end_time_str}"
+                }])
             else:
+                logger.info(f"[Stage 2] Generating cards for {len(observations)} observations "
+                            f"across {len(batches)} batches...")
                 response2 = generate_activity_cards(prompt2, self.model)
 
             cards_data = self._parse_activity_cards(response2, start_ts)
 
             if not cards_data:
-                logger.warning(f"[Stage 2] Failed: No cards generated for batch {batch_id}")
-                self.db.update_batch_status(batch_id, BatchStatus.FAILED)
-                for chunk in chunks:
-                    self.db.update_chunk_status(chunk.id, ChunkStatus.FAILED)
+                logger.warning(f"[Stage 2] No cards parsed, marking batches FAILED")
+                for batch in batches:
+                    self.db.update_batch_status(batch.id, BatchStatus.FAILED)
                 return
 
+            # 卡片归属到时间范围最近的 batch
             for card_data in cards_data:
-                card_start = max(card_data['start_ts'], start_ts)
-                card_end = min(card_data['end_ts'], end_ts)
+                card_start = card_data['start_ts']
+                card_end = card_data['end_ts']
 
+                owning_batch = batches[0]
+                for batch in batches:
+                    if batch.start_ts <= card_start:
+                        owning_batch = batch
+
+                card_start = max(card_start, start_ts)
+                card_end = min(card_end, end_ts)
                 if card_end <= card_start:
-                    logger.warning("Invalid card time range, using batch time range")
                     card_start = start_ts
                     card_end = end_ts
 
+                # 找对应批次最近的视频路径
+                video_path = self._find_video_for_batch(owning_batch)
+
                 card = TimelineCard(
-                    batch_id=batch_id,
+                    batch_id=owning_batch.id,
                     title=card_data.get('title', 'Unknown Activity'),
                     description=card_data.get('detailedSummary', card_data.get('summary', '')),
                     start_ts=card_start,
                     end_ts=card_end,
-                    category=card_data.get('category', 'other'),
-                    video_path=video_path
+                    category=card_data.get('category', '其他'),
+                    video_path=video_path,
                 )
                 self.db.insert_timeline_card(card)
 
-            self.db.update_batch_status(batch_id, BatchStatus.COMPLETED)
-            for chunk in chunks:
-                self.db.update_chunk_status(chunk.id, ChunkStatus.COMPLETED)
+            for batch in batches:
+                self.db.update_batch_status(batch.id, BatchStatus.COMPLETED)
 
-            logger.info(f"[Stage 2] Success: Generated {len(cards_data)} cards for batch {batch_id}")
+            logger.info(f"[Stage 2] Generated {len(cards_data)} cards, batches marked COMPLETED")
 
         except Exception as e:
-            logger.error(f"Error processing batch {batch_id}: {e}", exc_info=True)
-            self.db.update_batch_status(batch_id, BatchStatus.FAILED)
+            logger.error(f"[Stage 2] Failed: {e}", exc_info=True)
+            for batch in batches:
+                self.db.update_batch_status(batch.id, BatchStatus.FAILED)
+
+    def _find_video_for_batch(self, batch) -> Optional[str]:
+        """返回该 batch 时间范围内第一个有效视频路径（用于卡片关联）"""
+        try:
+            chunks = self.db.get_chunks_by_time_range(batch.start_ts, batch.end_ts)
             for chunk in chunks:
-                self.db.update_chunk_status(chunk.id, ChunkStatus.FAILED)
+                if chunk.file_path:
+                    return chunk.file_path
+        except Exception:
+            pass
+        return None
+
+    def _fetch_context_cards_json(self, before_ts: int) -> str:
+        """查询 before_ts 之前的前序活动卡片，序列化为 JSON 字符串供 Stage 2 prompt 使用"""
+        try:
+            cfg = get_config().analysis
+            since_ts = before_ts - cfg.context_window_minutes * 60
+            cards = self.db.get_preceding_timeline_cards(
+                before_ts=before_ts,
+                since_ts=since_ts,
+                limit=cfg.context_max_cards,
+            )
+            if not cards:
+                return "[]"
+            result = []
+            for card in cards:
+                result.append({
+                    "startTime": self._format_timestamp(card.start_ts),
+                    "endTime": self._format_timestamp(card.end_ts),
+                    "category": card.category,
+                    "title": card.title,
+                    "summary": card.description,
+                })
+            logger.info(f"[Stage 2] Loaded {len(result)} preceding cards as context")
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"[Stage 2] Failed to fetch context cards: {e}")
+            return "[]"
 
     def _parse_observations(self, response: str, batch_start_ts: int) -> List[Dict[str, Any]]:
         try:
@@ -376,7 +495,8 @@ class AnalysisManager:
     def trigger_analysis_now(self):
         logger.info("Triggering immediate analysis...")
         try:
-            self._process_recordings()
+            self._run_stage1()
+            self._run_stage2()
         except Exception as e:
             logger.error(f"Error in triggered analysis: {e}", exc_info=True)
 
@@ -393,7 +513,8 @@ class AnalysisManager:
 
             batches = self.db.get_batches_by_day(day)
             for batch in batches:
-                self.db.update_batch_status(batch.id, BatchStatus.PENDING)
+                if batch.id is not None:
+                    self.db.update_batch_status(batch.id, BatchStatus.PENDING)
 
             self.trigger_analysis_now()
 

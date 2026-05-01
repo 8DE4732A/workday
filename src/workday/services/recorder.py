@@ -35,10 +35,14 @@ class ScreenRecorder:
         self.quality = cfg.recording.quality
         self.format = cfg.recording.format
         self.monitor_index = cfg.recording.monitor_index
+        self.static_diff_threshold = cfg.recording.static_diff_threshold
+        self.static_frame_ratio = cfg.recording.static_frame_ratio
 
         self.current_chunk_id: Optional[int] = None
         self.current_chunk_frames: List[np.ndarray] = []
         self.chunk_start_time: Optional[float] = None
+        self._prev_small_gray: Optional[np.ndarray] = None
+        self._static_flags: List[bool] = []
 
     @staticmethod
     def list_monitors() -> List[dict]:
@@ -74,6 +78,8 @@ class ScreenRecorder:
             return
 
         self.is_recording = True
+        self._prev_small_gray = None
+        self._static_flags = []
 
         try:
             with mss.mss() as sct:
@@ -101,6 +107,7 @@ class ScreenRecorder:
                     sct_img = sct.grab(monitor)
                     img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
                     frame = np.array(img)
+                    self._static_flags.append(self._is_static_frame(frame))
                     self.current_chunk_frames.append(frame)
 
                     elapsed = time.time() - self.chunk_start_time
@@ -126,32 +133,63 @@ class ScreenRecorder:
         logger.info("Stopping screen recording...")
         self.is_recording = False
 
+    def _is_static_frame(self, frame: np.ndarray) -> bool:
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        small = cv2.resize(gray, (64, 36), interpolation=cv2.INTER_AREA)
+        if self._prev_small_gray is None:
+            self._prev_small_gray = small
+            return False
+        diff = float(np.mean(np.abs(small.astype(np.int16) - self._prev_small_gray.astype(np.int16))))
+        self._prev_small_gray = small
+        return diff < self.static_diff_threshold
+
     def _save_chunk(self):
-        if not self.current_chunk_frames:
+        if not self.current_chunk_frames or self.chunk_start_time is None:
             return
 
         try:
             start_ts = int(self.chunk_start_time)
             end_ts = int(time.time())
 
-            timestamp = datetime.fromtimestamp(start_ts).strftime("%Y%m%d_%H%M%S")
-            video_filename = f"chunk_{timestamp}.mp4"
-            video_path = self.output_dir / video_filename
+            static_flags = self._static_flags or []
+            if static_flags:
+                static_ratio = sum(static_flags) / len(static_flags)
+            else:
+                static_ratio = 0.0
 
-            self._save_video(self.current_chunk_frames, str(video_path))
+            if static_ratio >= self.static_frame_ratio:
+                chunk = RecordingChunk(
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    file_path="",
+                    status=ChunkStatus.SKIPPED
+                )
+                chunk_id = self.db.insert_chunk(chunk)
+                static_count = sum(static_flags)
+                total_count = len(static_flags)
+                logger.info(
+                    f"Chunk skipped (static screen: {static_count}/{total_count} frames, "
+                    f"ratio={static_ratio:.2f})"
+                )
+            else:
+                timestamp = datetime.fromtimestamp(start_ts).strftime("%Y%m%d_%H%M%S")
+                video_filename = f"chunk_{timestamp}.mp4"
+                video_path = self.output_dir / video_filename
 
-            chunk = RecordingChunk(
-                start_ts=start_ts,
-                end_ts=end_ts,
-                file_path=str(video_path),
-                status=ChunkStatus.PENDING
-            )
-            chunk_id = self.db.insert_chunk(chunk)
+                self._save_video(self.current_chunk_frames, str(video_path))
 
-            logger.info(f"Saved chunk {chunk_id}: {video_path} ({len(self.current_chunk_frames)} frames)")
+                chunk = RecordingChunk(
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    file_path=str(video_path),
+                    status=ChunkStatus.PENDING
+                )
+                chunk_id = self.db.insert_chunk(chunk)
+                logger.info(f"Saved chunk {chunk_id}: {video_path} ({len(self.current_chunk_frames)} frames)")
 
             self.current_chunk_frames = []
             self.chunk_start_time = None
+            self._static_flags = []
 
         except Exception as e:
             logger.error(f"Error saving chunk: {e}", exc_info=True)

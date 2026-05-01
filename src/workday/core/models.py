@@ -13,12 +13,14 @@ class ChunkStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    SKIPPED = "skipped"
 
 
 class BatchStatus(str, Enum):
     """批次状态"""
     PENDING = "pending"
     PROCESSING = "processing"
+    TRANSCRIBED = "transcribed"
     COMPLETED = "completed"
     FAILED = "failed"
 

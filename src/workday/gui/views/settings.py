@@ -3,6 +3,52 @@ import customtkinter as ctk
 from typing import Dict, Any
 
 
+class _Tooltip:
+    """轻量 Tooltip：hover 或点击 ? 按钮时在旁边弹出说明气泡"""
+
+    def __init__(self, widget: ctk.CTkButton, text: str):
+        self._widget = widget
+        self._text = text
+        self._win: ctk.CTkToplevel | None = None
+        widget.bind("<Enter>", self._show)
+        widget.bind("<Leave>", self._hide)
+        widget.configure(command=self._toggle)
+
+    def _show(self, event=None):
+        if self._win is not None:
+            return
+        x = self._widget.winfo_rootx() + self._widget.winfo_width() + 4
+        y = self._widget.winfo_rooty()
+        win = ctk.CTkToplevel(self._widget)
+        win.wm_overrideredirect(True)
+        win.wm_geometry(f"+{x}+{y}")
+        win.lift()
+        win.attributes("-topmost", True)
+        ctk.CTkLabel(
+            win,
+            text=self._text,
+            font=("", 12),
+            wraplength=260,
+            justify="left",
+            corner_radius=6,
+            fg_color=("gray90", "gray20"),
+            padx=10,
+            pady=8,
+        ).pack()
+        self._win = win
+
+    def _hide(self, event=None):
+        if self._win is not None:
+            self._win.destroy()
+            self._win = None
+
+    def _toggle(self):
+        if self._win is not None:
+            self._hide()
+        else:
+            self._show()
+
+
 class SettingsView(ctk.CTkScrollableFrame):
     """设置视图"""
 
@@ -22,9 +68,23 @@ class SettingsView(ctk.CTkScrollableFrame):
         self._build_llm_section()
         self._build_recording_section()
         self._add_section("分析设置", [
-            ("analysis.interval", "分析间隔（分钟）", "int"),
-            ("analysis.batch_duration", "批次时长（分钟）", "int"),
-            ("analysis.debug_mode", "调试模式（跳过 LLM）", "bool"),
+            ("analysis.interval", "分析间隔（分钟）", "int",
+             "后台分析服务的轮询间隔。每隔此时长检查一次是否有新录制片段或待生成卡片。"),
+            ("analysis.batch_duration", "批次时长（分钟）", "int",
+             "将多个 15 秒录制片段合并为一个分析批次的时间窗口。窗口内的片段会拼接成一段视频后送入 Stage 1。"),
+            "--- Stage 1：视频转录",
+            ("analysis.card_window_minutes", "触发时间窗口（分钟）", "int",
+             "Stage 2 触发条件之一：最早待处理的 Observation 距现在超过此时长，则立即生成活动卡片，无需等待数量条件。"),
+            ("analysis.card_min_observations", "触发最少观察数", "int",
+             "Stage 2 触发条件之一：待处理的 Observation 数量达到此值，则立即生成活动卡片，无需等待时间条件。两个条件满足任一即触发。"),
+            "--- Stage 2：活动卡片生成",
+            ("analysis.context_window_minutes", "前序卡片时间窗口（分钟）", "int",
+             "生成活动卡片时，向模型提供的历史上下文范围。会查询当前批次开始时间往前此时长内已生成的活动卡片，帮助模型保持时间线连贯。"),
+            ("analysis.context_max_cards", "前序卡片最大数量", "int",
+             "历史上下文卡片的数量上限。与时间窗口取并集：时间窗口内的卡片和最近 N 张卡片都会被包含，避免长时间空闲后上下文为空。"),
+            "---",
+            ("analysis.debug_mode", "调试模式（跳过 LLM）", "bool",
+             "开启后跳过所有 LLM 调用，直接生成占位内容。用于调试界面和数据流，不消耗 Token。"),
         ])
         self._add_section("数据保留", [
             ("retention.days", "保留天数", "int"),
@@ -80,13 +140,20 @@ class SettingsView(ctk.CTkScrollableFrame):
 
     def _fetch_models(self):
         api_base_entry = self._widgets["llm.api_base"][1]
-        api_key_entry = self._widgets["llm.api_key"][1]
         api_base = api_base_entry.get().strip()
-        api_key = api_key_entry.get().strip()
 
         if not api_base:
             self._status_label.configure(text="请先填写 API Base URL", text_color="orange")
             return
+
+        # api_key 优先用输入框里的值（用户刚输入但未保存），
+        # 若输入框内容是掩码则回退到 config 中存储的真实值
+        from workday.core.config import get_config, Config
+        raw_input = self._widgets["llm.api_key"][1].get().strip()
+        if raw_input and not Config.is_masked(raw_input):
+            api_key = raw_input
+        else:
+            api_key = get_config().get("llm.api_key", "")
 
         self._status_label.configure(text="正在获取模型列表...", text_color=("gray50", "gray60"))
         self.update()
@@ -187,7 +254,28 @@ class SettingsView(ctk.CTkScrollableFrame):
         ctk.CTkLabel(frame, text=title, font=("", 14, "bold")).pack(anchor="w", padx=12, pady=(10, 6))
         ctk.CTkFrame(frame, height=1, fg_color=("gray80", "gray30")).pack(fill="x", padx=12)
 
-        for key, label, field_type in fields:
+        for field in fields:
+            # 分割线：纯字符串，"--- 可选标签"
+            if isinstance(field, str):
+                label_text = field.lstrip("- ").strip()
+                divider_row = ctk.CTkFrame(frame, fg_color="transparent")
+                divider_row.pack(fill="x", padx=12, pady=(8, 2))
+                ctk.CTkFrame(divider_row, height=1, fg_color=("gray75", "gray35")).pack(
+                    side="left", fill="x", expand=True, pady=6
+                )
+                if label_text:
+                    ctk.CTkLabel(
+                        divider_row, text=f"  {label_text}  ",
+                        font=("", 11), text_color=("gray50", "gray55"),
+                    ).pack(side="left")
+                    ctk.CTkFrame(divider_row, height=1, fg_color=("gray75", "gray35")).pack(
+                        side="left", fill="x", expand=True, pady=6
+                    )
+                continue
+
+            key, label, field_type = field[0], field[1], field[2]
+            tip = field[3] if len(field) > 3 else None
+
             row = ctk.CTkFrame(frame, fg_color="transparent")
             row.pack(fill="x", padx=12, pady=4)
             ctk.CTkLabel(row, text=label, font=("", 12), width=180, anchor="w").pack(side="left")
@@ -200,6 +288,19 @@ class SettingsView(ctk.CTkScrollableFrame):
                 entry = ctk.CTkEntry(row, width=260)
                 entry.pack(side="left")
                 self._widgets[key] = (field_type, entry)
+
+            if tip:
+                btn = ctk.CTkButton(
+                    row, text="?", width=24, height=24,
+                    font=("", 11), fg_color="transparent",
+                    text_color=("gray50", "gray60"),
+                    hover_color=("gray85", "gray25"),
+                    border_width=1,
+                    border_color=("gray70", "gray40"),
+                    corner_radius=12,
+                )
+                btn.pack(side="left", padx=(6, 0))
+                _Tooltip(btn, tip)
 
     def _load(self):
         try:
@@ -222,12 +323,17 @@ class SettingsView(ctk.CTkScrollableFrame):
                         raw = ""
                     widget.delete(0, "end")
                     widget.insert(0, str(raw))
+
+            # api_key 和 api_base 均已配置时，延迟自动获取模型列表
+            if cfg.get("llm.api_key", "") and cfg.get("llm.api_base", ""):
+                self.after(300, self._fetch_models)
+
         except Exception as e:
             self._status_label.configure(text=f"加载失败: {e}", text_color="red")
 
     def _save(self):
         try:
-            from workday.core.config import get_config
+            from workday.core.config import get_config, Config
             cfg = get_config()
 
             cfg.set("recording.monitor_index", self._get_monitor_index())
@@ -241,8 +347,11 @@ class SettingsView(ctk.CTkScrollableFrame):
                     cfg.set(key, widget.get())
                 else:
                     value = widget.get()
-                    if value:
-                        cfg.set(key, value)
+                    if not value:
+                        continue
+                    if field_type == "password" and Config.is_masked(value):
+                        continue
+                    cfg.set(key, value)
 
             self._status_label.configure(text="已保存", text_color=("#10b981", "#34d399"))
             self.after(3000, lambda: self._status_label.configure(text=""))
