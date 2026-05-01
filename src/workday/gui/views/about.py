@@ -1,4 +1,5 @@
 """关于视图"""
+import webbrowser
 import customtkinter as ctk
 from pathlib import Path
 
@@ -56,8 +57,11 @@ class AboutView(ctk.CTkScrollableFrame):
 
         ctk.CTkFrame(self, height=1, fg_color=("gray80", "gray30")).pack(fill="x", padx=20, pady=12)
         ctk.CTkLabel(self, text="开源地址", font=("", 14, "bold")).pack(anchor="w", padx=20, pady=(0, 4))
-        ctk.CTkLabel(self, text="https://github.com/8DE4732A/workday",
-                     font=("", 12), text_color=("gray50", "gray60")).pack(anchor="w", padx=20)
+        url = "https://github.com/8DE4732A/workday"
+        link = ctk.CTkLabel(self, text=url, font=("", 12), text_color=("#3b82f6", "#60a5fa"),
+                            cursor="hand2")
+        link.pack(anchor="w", padx=20)
+        link.bind("<Button-1>", lambda e: webbrowser.open(url))
 
         ctk.CTkFrame(self, height=24, fg_color="transparent").pack()
 
