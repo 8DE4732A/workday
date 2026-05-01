@@ -1,6 +1,6 @@
 """设置视图"""
 import customtkinter as ctk
-from typing import Dict, Any
+from typing import Dict, Any, Callable, Optional
 
 
 class _Tooltip:
@@ -52,8 +52,9 @@ class _Tooltip:
 class SettingsView(ctk.CTkScrollableFrame):
     """设置视图"""
 
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, on_developer_toggle: Optional[Callable[[bool], None]] = None, **kwargs):
         super().__init__(parent, **kwargs)
+        self._on_developer_toggle = on_developer_toggle
         self._widgets: Dict[str, Any] = {}
         self._monitor_options: list[str] = []
         self._build()
@@ -90,6 +91,7 @@ class SettingsView(ctk.CTkScrollableFrame):
             ("retention.days", "保留天数", "int"),
         ])
         self._build_log_section()
+        self._build_developer_section()
 
         ctk.CTkFrame(self, height=1, fg_color=("gray80", "gray30")).pack(fill="x", padx=16, pady=8)
         ctk.CTkButton(self, text="保存设置", command=self._save, width=120).pack(anchor="w", padx=16, pady=(0, 8))
@@ -99,6 +101,30 @@ class SettingsView(ctk.CTkScrollableFrame):
         ctk.CTkButton(self, text="清空所有数据", fg_color="#ef4444",
                       hover_color="#dc2626", command=self._clear_data,
                       width=120).pack(anchor="w", padx=16, pady=(0, 20))
+
+    def _build_developer_section(self):
+        frame = ctk.CTkFrame(self, corner_radius=8)
+        frame.pack(fill="x", padx=16, pady=6)
+
+        ctk.CTkLabel(frame, text="开发者选项", font=("", 14, "bold")).pack(anchor="w", padx=12, pady=(10, 6))
+        ctk.CTkFrame(frame, height=1, fg_color=("gray80", "gray30")).pack(fill="x", padx=12)
+
+        row = ctk.CTkFrame(frame, fg_color="transparent")
+        row.pack(fill="x", padx=12, pady=8)
+        ctk.CTkLabel(row, text="开发者模式", font=("", 12), width=180, anchor="w").pack(side="left")
+        self._dev_var = ctk.BooleanVar(value=False)
+        ctk.CTkSwitch(row, variable=self._dev_var, text="").pack(side="left")
+
+        btn = ctk.CTkButton(
+            row, text="?", width=24, height=24,
+            font=("", 11), fg_color="transparent",
+            text_color=("gray50", "gray60"),
+            hover_color=("gray85", "gray25"),
+            border_width=1, border_color=("gray70", "gray40"),
+            corner_radius=12,
+        )
+        btn.pack(side="left", padx=(6, 0))
+        _Tooltip(btn, "开启后在侧边栏显示「开发者」选项卡，\n提供日志查看与数据库浏览功能。\n默认关闭，不影响普通使用。")
 
     def _build_log_section(self):
         frame = ctk.CTkFrame(self, corner_radius=8)
@@ -349,6 +375,10 @@ class SettingsView(ctk.CTkScrollableFrame):
             # 日志级别
             self._log_level_var.set(cfg.get("log.file_level", "WARNING"))
 
+            # 开发者模式
+            dev_mode = cfg.get("app.developer_mode", False)
+            self._dev_var.set(bool(dev_mode))
+
             for key, (field_type, widget) in self._widgets.items():
                 if field_type == "bool":
                     widget.set(bool(cfg.get(key, False)))
@@ -382,6 +412,13 @@ class SettingsView(ctk.CTkScrollableFrame):
             cfg.set("log.file_level", log_level)
             from workday.core.logger import log_manager
             log_manager.set_file_log_level(log_level)
+
+            # 开发者模式：先记录旧值再保存，若改变则回调通知
+            old_dev = bool(cfg.get("app.developer_mode", False))
+            new_dev = bool(self._dev_var.get())
+            cfg.set("app.developer_mode", new_dev)
+            if old_dev != new_dev and self._on_developer_toggle:
+                self._on_developer_toggle(new_dev)
 
             for key, (field_type, widget) in self._widgets.items():
                 if field_type == "bool":

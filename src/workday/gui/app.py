@@ -6,14 +6,6 @@ from typing import Optional
 class WorkdayApp(ctk.CTk):
     """Workday 主窗口"""
 
-    NAV_ITEMS = [
-        ("timeline", "时间线", "📋"),
-        ("dashboard", "仪表盘", "📊"),
-        ("settings", "设置", "⚙️"),
-        ("guide", "指南", "📖"),
-        ("about", "关于", "ℹ️"),
-    ]
-
     def __init__(self):
         super().__init__()
 
@@ -39,8 +31,44 @@ class WorkdayApp(ctk.CTk):
         self._current_view: Optional[str] = None
         self._nav_buttons = {}
 
+        self._set_icon()
         self._build()
         self._show_view("timeline")
+
+    def _set_icon(self):
+        try:
+            import sys
+            from pathlib import Path
+            assets = Path(__file__).parent.parent / "assets"
+            if sys.platform == "win32":
+                self.iconbitmap(str(assets / "icon.ico"))
+            elif sys.platform == "darwin":
+                # 设置 Dock 图标
+                import AppKit
+                ns_image = AppKit.NSImage.alloc().initWithContentsOfFile_(
+                    str(assets / "icon_512.png")
+                )
+                AppKit.NSApplication.sharedApplication().setApplicationIconImage_(ns_image)
+            else:
+                from PIL import Image, ImageTk
+                img = Image.open(assets / "icon_512.png")
+                self._icon_photo = ImageTk.PhotoImage(img)
+                self.iconphoto(True, self._icon_photo)
+        except Exception:
+            pass
+
+    def _get_nav_items(self) -> list:
+        from workday.core.config import get_config
+        items = [
+            ("timeline", "时间线", "📋"),
+            ("dashboard", "仪表盘", "📊"),
+            ("settings", "设置", "⚙️"),
+            ("guide", "指南", "📖"),
+            ("about", "关于", "ℹ️"),
+        ]
+        if get_config().get("app.developer_mode", False):
+            items.insert(2, ("developer", "开发者", "🛠"))
+        return items
 
     def _build(self):
         self.grid_columnconfigure(1, weight=1)
@@ -66,21 +94,10 @@ class WorkdayApp(ctk.CTk):
 
         ctk.CTkFrame(self._sidebar, height=1, fg_color=("gray80", "gray30")).pack(fill="x", padx=12, pady=(0, 8))
 
-        # 导航按钮
-        for view_id, label, icon in self.NAV_ITEMS:
-            btn = ctk.CTkButton(
-                self._sidebar,
-                text=f"  {icon}  {label}",
-                anchor="w",
-                height=40,
-                corner_radius=6,
-                fg_color="transparent",
-                hover_color=("gray80", "gray25"),
-                text_color=("gray20", "gray90"),
-                command=lambda vid=view_id: self._show_view(vid)
-            )
-            btn.pack(fill="x", padx=8, pady=2)
-            self._nav_buttons[view_id] = btn
+        # 导航按钮容器（独立子 frame，便于重建）
+        self._nav_frame = ctk.CTkFrame(self._sidebar, fg_color="transparent")
+        self._nav_frame.pack(fill="x")
+        self._build_nav_buttons()
 
         # 底部录制控制
         spacer = ctk.CTkFrame(self._sidebar, fg_color="transparent")
@@ -97,6 +114,46 @@ class WorkdayApp(ctk.CTk):
         from workday.gui.widgets.recording_controls import RecordingControls
         self._rec_controls = RecordingControls(rec_frame, db=self.db)
         self._rec_controls.pack(fill="x", padx=4)
+
+    def _build_nav_buttons(self):
+        self._nav_buttons = {}
+        for view_id, label, icon in self._get_nav_items():
+            btn = ctk.CTkButton(
+                self._nav_frame,
+                text=f"  {icon}  {label}",
+                anchor="w",
+                height=40,
+                corner_radius=6,
+                fg_color="transparent",
+                hover_color=("gray80", "gray25"),
+                text_color=("gray20", "gray90"),
+                command=lambda vid=view_id: self._show_view(vid)
+            )
+            btn.pack(fill="x", padx=8, pady=2)
+            self._nav_buttons[view_id] = btn
+
+        # 高亮当前视图按钮
+        if self._current_view and self._current_view in self._nav_buttons:
+            self._nav_buttons[self._current_view].configure(
+                fg_color=("gray75", "gray30"),
+                text_color=("gray5", "white")
+            )
+
+    def _rebuild_nav_buttons(self):
+        for w in self._nav_frame.winfo_children():
+            w.destroy()
+        self._build_nav_buttons()
+
+    def _on_developer_toggle(self, enabled: bool):
+        if not enabled:
+            # 若当前在开发者视图，先回到时间线
+            if self._current_view == "developer":
+                self._show_view("timeline")
+            # 销毁已创建的 developer 视图
+            if "developer" in self._views:
+                self._views["developer"].destroy()
+                del self._views["developer"]
+        self._rebuild_nav_buttons()
 
     def _show_view(self, view_id: str):
         if view_id == self._current_view:
@@ -137,13 +194,16 @@ class WorkdayApp(ctk.CTk):
             return DashboardView(parent, db=self.db)
         elif view_id == "settings":
             from workday.gui.views.settings import SettingsView
-            return SettingsView(parent)
+            return SettingsView(parent, on_developer_toggle=self._on_developer_toggle)
         elif view_id == "guide":
             from workday.gui.views.guide import GuideView
             return GuideView(parent)
         elif view_id == "about":
             from workday.gui.views.about import AboutView
             return AboutView(parent)
+        elif view_id == "developer":
+            from workday.gui.views.developer import DeveloperView
+            return DeveloperView(parent, db=self.db)
         else:
             frame = ctk.CTkFrame(parent)
             ctk.CTkLabel(frame, text=f"视图 '{view_id}' 未找到").pack(expand=True)

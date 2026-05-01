@@ -82,6 +82,7 @@ class Config:
         'llm.api_key': ('string', 'llm', 'API Key', '', True),
         'llm.model': ('string', 'llm', '模型 ID', '', False),
         'log.file_level': ('string', 'log', '文件日志级别', 'WARNING', False),
+        'app.developer_mode': ('bool', 'app', '开发者模式（显示开发者 tab）', False, False),
     }
 
     SENSITIVE_KEYS = {key for key, (_, _, _, _, is_sensitive) in CONFIG_SCHEMA.items() if is_sensitive}

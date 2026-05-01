@@ -40,7 +40,7 @@ class _CalendarPicker(ctk.CTkToplevel):
     def _check_focus(self):
         try:
             focused = self.focus_get()
-            if focused is None or str(focused) not in str(self.winfo_children()):
+            if focused is None or focused.winfo_toplevel() is not self:
                 self.destroy()
         except Exception:
             self.destroy()
@@ -98,21 +98,17 @@ class _CalendarPicker(ctk.CTkToplevel):
                     )
                     btn.pack(side="left")
 
-    def _prev_month(self):
-        if self._month == 1:
-            self._year -= 1
-            self._month = 12
-        else:
-            self._month -= 1
+    def _shift_month(self, delta: int):
+        month = self._month + delta
+        self._year += (month - 1) // 12
+        self._month = (month - 1) % 12 + 1
         self._render()
 
+    def _prev_month(self):
+        self._shift_month(-1)
+
     def _next_month(self):
-        if self._month == 12:
-            self._year += 1
-            self._month = 1
-        else:
-            self._month += 1
-        self._render()
+        self._shift_month(1)
 
     def _pick(self, d: date):
         self.on_select(d.isoformat())
@@ -193,7 +189,7 @@ class DashboardView(ctk.CTkFrame):
         # 汇总卡片
         self._summary_frame = ctk.CTkFrame(self, fg_color="transparent")
         self._summary_frame.pack(fill="x", padx=16, pady=(0, 8))
-        self._summary_cards: list[ctk.CTkFrame] = []
+        self._summary_val_labels: list[tuple[str, ctk.CTkLabel]] = []
         self._build_summary_cards()
 
         # 表头
@@ -222,7 +218,7 @@ class DashboardView(ctk.CTkFrame):
         self._count_label.pack(side="right")
 
     def _build_summary_cards(self):
-        for title, key in [("输入 Token", "prompt"), ("输出 Token", "completion"), ("总计 Token", "total")]:
+        for title, key in [("输入 Token", "prompt_tokens"), ("输出 Token", "completion_tokens"), ("总计 Token", "total_tokens")]:
             card = ctk.CTkFrame(self._summary_frame, corner_radius=8,
                                 fg_color=("gray90", "gray18"))
             card.pack(side="left", padx=(0, 8), pady=2, ipadx=12, ipady=8)
@@ -230,14 +226,11 @@ class DashboardView(ctk.CTkFrame):
                          text_color=("gray50", "gray55")).pack(anchor="w")
             val_label = ctk.CTkLabel(card, text="—", font=("", 20, "bold"))
             val_label.pack(anchor="w")
-            card._key = key              # type: ignore[attr-defined]
-            card._val_label = val_label  # type: ignore[attr-defined]
-            self._summary_cards.append(card)
+            self._summary_val_labels.append((key, val_label))
 
     def _update_summary(self, summary: dict):
-        for card in self._summary_cards:
-            card._val_label.configure(  # type: ignore[attr-defined]
-                text=_fmt_num(summary.get(f"{card._key}_tokens", 0)))  # type: ignore[attr-defined]
+        for key, val_label in self._summary_val_labels:
+            val_label.configure(text=_fmt_num(summary.get(key, 0)))
 
     def _render_header(self):
         for text, w in [("时间", 140), ("类型", 100), ("模型", 150),
@@ -267,8 +260,9 @@ class DashboardView(ctk.CTkFrame):
             offset = self._page * self._page_size
             records = self.db.get_token_usage_records(
                 start_date=start, end_date=end, limit=self._page_size, offset=offset)
-            self._total = self.db.get_token_usage_count(start_date=start, end_date=end)
-            self._update_summary(self.db.get_token_usage_summary(start_date=start, end_date=end))
+            summary = self.db.get_token_usage_summary(start_date=start, end_date=end)
+            self._total = summary['count']
+            self._update_summary(summary)
             self._count_label.configure(text=f"共 {self._total} 条记录")
 
             if not records:
