@@ -31,6 +31,15 @@ wheels = [
 ]
 
 [[package]]
+name = "babel"
+version = "2.18.0"
+source = { registry = "http://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "http://mirrors.aliyun.com/pypi/packages/7d/b2/51899539b6ceeeb420d40ed3cd4b7a40519404f9baf3d4ac99dc413a834b/babel-2.18.0.tar.gz", hash = "sha256:b80b99a14bd085fcacfa15c9165f651fbb3406e66cc603abf11c5750937c992d" }
+wheels = [
+    { url = "http://mirrors.aliyun.com/pypi/packages/77/f5/21d2de20e8b8b0408f0681956ca2c69f1320a3848ac50e6e7f39c6159675/babel-2.18.0-py3-none-any.whl", hash = "sha256:e2b422b277c2b9a9630c1d7903c2a00d0830c409c59ac8cae9081c92f1aeba35" },
+]
+
+[[package]]
 name = "certifi"
 version = "2025.11.12"
 source = { registry = "http://mirrors.aliyun.com/pypi/simple" }
@@ -1000,6 +1009,18 @@ wheels = [
 ]
 
 [[package]]
+name = "tkcalendar"
+version = "1.6.1"
+source = { registry = "http://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "babel" },
+]
+sdist = { url = "http://mirrors.aliyun.com/pypi/packages/65/3d/3406cf7963661ed890082bff17ed4c5e26b5a564306639303d4fbb2a047f/tkcalendar-1.6.1.tar.gz", hash = "sha256:5edf958c0a59429e90309e9b805b2e229192bbcab952460247204d7030eea5cf" }
+wheels = [
+    { url = "http://mirrors.aliyun.com/pypi/packages/e9/d4/9528ea6ecb5d4394f425df651957da6f6a715b41c5b12d43d41888c14394/tkcalendar-1.6.1-py3-none-any.whl", hash = "sha256:9d3a80816a7b32d64fab696fa3d2a007fb23c87953267d5e343a38ff4cd7c15c" },
+]
+
+[[package]]
 name = "tqdm"
 version = "4.67.3"
 source = { registry = "http://mirrors.aliyun.com/pypi/simple" }
@@ -1076,6 +1097,7 @@ dependencies = [
     { name = "opencv-python" },
     { name = "pillow" },
     { name = "platformdirs" },
+    { name = "tkcalendar" },
 ]
 
 [package.optional-dependencies]
@@ -1098,6 +1120,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
+    { name = "tkcalendar", specifier = ">=1.6.1" },
 ]
 provides-extras = ["dev"]
 

@@ -1,6 +1,7 @@
 """仪表盘视图 - Token 用量统计"""
 import customtkinter as ctk
 from datetime import datetime, timezone
+from tkcalendar import DateEntry
 
 
 def _fmt_num(n: int) -> str:
@@ -31,12 +32,16 @@ class DashboardView(ctk.CTkFrame):
         filter_frame.pack(fill="x", padx=16, pady=(0, 8))
 
         ctk.CTkLabel(filter_frame, text="开始日期：", font=("", 12)).pack(side="left")
-        self._start_entry = ctk.CTkEntry(filter_frame, width=110, placeholder_text="YYYY-MM-DD")
+        self._start_entry = DateEntry(filter_frame, width=11, date_pattern="yyyy-mm-dd",
+                                      font=("", 12), showweeknumbers=False)
         self._start_entry.pack(side="left", padx=(0, 8))
+        self._start_entry.delete(0, "end")  # 初始清空，不预填今天
 
         ctk.CTkLabel(filter_frame, text="结束日期：", font=("", 12)).pack(side="left")
-        self._end_entry = ctk.CTkEntry(filter_frame, width=110, placeholder_text="YYYY-MM-DD")
+        self._end_entry = DateEntry(filter_frame, width=11, date_pattern="yyyy-mm-dd",
+                                    font=("", 12), showweeknumbers=False)
         self._end_entry.pack(side="left", padx=(0, 8))
+        self._end_entry.delete(0, "end")
 
         ctk.CTkButton(filter_frame, text="查询", width=60, height=28,
                       command=self._on_filter).pack(side="left", padx=(0, 4))
@@ -118,7 +123,7 @@ class DashboardView(ctk.CTkFrame):
             return utc_str[:16]
 
     def _get_filter(self):
-        """返回 (start_date, end_date)，单日查询时 start==end"""
+        """返回 (start_date, end_date)，留空时返回 None"""
         start = self._start_entry.get().strip() or None
         end = self._end_entry.get().strip() or None
         return start, end
