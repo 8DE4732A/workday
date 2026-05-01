@@ -1,156 +1,12 @@
 """仪表盘视图 - Token 用量统计"""
-import calendar
 import customtkinter as ctk
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
+
+from workday.gui.widgets.calendar_picker import DateButton
 
 
 def _fmt_num(n: int) -> str:
     return f"{n:,}"
-
-
-class _CalendarPicker(ctk.CTkToplevel):
-    """轻量日历弹窗，选完后回调 on_select(date_str)"""
-
-    def __init__(self, parent, on_select, initial: str = ""):
-        super().__init__(parent)
-        self.on_select = on_select
-        self.wm_overrideredirect(True)
-        self.attributes("-topmost", True)
-        self.resizable(False, False)
-
-        try:
-            d = date.fromisoformat(initial)
-        except Exception:
-            d = date.today()
-        self._year = d.year
-        self._month = d.month
-
-        self._build()
-        self._render()
-
-        # 定位到父控件旁边
-        self.update_idletasks()
-        px = parent.winfo_rootx()
-        py = parent.winfo_rooty() + parent.winfo_height() + 2
-        self.geometry(f"+{px}+{py}")
-
-        # 点击窗口外关闭
-        self.bind("<FocusOut>", lambda e: self.after(100, self._check_focus))
-
-    def _check_focus(self):
-        try:
-            focused = self.focus_get()
-            if focused is None or focused.winfo_toplevel() is not self:
-                self.destroy()
-        except Exception:
-            self.destroy()
-
-    def _build(self):
-        self._top = ctk.CTkFrame(self, corner_radius=8, fg_color=("gray92", "gray18"),
-                                 border_width=1, border_color=("gray75", "gray35"))
-        self._top.pack(padx=1, pady=1)
-
-        # 月份导航
-        nav = ctk.CTkFrame(self._top, fg_color="transparent")
-        nav.pack(fill="x", padx=8, pady=(8, 4))
-        ctk.CTkButton(nav, text="◀", width=28, height=26,
-                      command=self._prev_month).pack(side="left")
-        self._title = ctk.CTkLabel(nav, text="", font=("", 13, "bold"), width=130)
-        self._title.pack(side="left", expand=True)
-        ctk.CTkButton(nav, text="▶", width=28, height=26,
-                      command=self._next_month).pack(side="right")
-
-        # 星期头
-        week_frame = ctk.CTkFrame(self._top, fg_color="transparent")
-        week_frame.pack(padx=8)
-        for d in ["一", "二", "三", "四", "五", "六", "日"]:
-            ctk.CTkLabel(week_frame, text=d, font=("", 11),
-                         width=32, text_color=("gray50", "gray55")).pack(side="left")
-
-        # 日期格子容器
-        self._grid = ctk.CTkFrame(self._top, fg_color="transparent")
-        self._grid.pack(padx=8, pady=(0, 8))
-
-    def _render(self):
-        for w in self._grid.winfo_children():
-            w.destroy()
-        self._title.configure(text=f"{self._year} 年 {self._month} 月")
-
-        cal = calendar.monthcalendar(self._year, self._month)
-        today = date.today()
-        for week in cal:
-            row = ctk.CTkFrame(self._grid, fg_color="transparent")
-            row.pack()
-            for day in week:
-                if day == 0:
-                    ctk.CTkLabel(row, text="", width=32, height=28).pack(side="left")
-                else:
-                    d = date(self._year, self._month, day)
-                    is_today = (d == today)
-                    btn = ctk.CTkButton(
-                        row, text=str(day), width=32, height=28,
-                        font=("", 12, "bold") if is_today else ("", 12),
-                        fg_color=("#3b82f6", "#2563eb") if is_today else "transparent",
-                        hover_color=("gray80", "gray30"),
-                        text_color=("gray10", "gray95"),
-                        corner_radius=4,
-                        command=lambda dd=d: self._pick(dd),
-                    )
-                    btn.pack(side="left")
-
-    def _shift_month(self, delta: int):
-        month = self._month + delta
-        self._year += (month - 1) // 12
-        self._month = (month - 1) % 12 + 1
-        self._render()
-
-    def _prev_month(self):
-        self._shift_month(-1)
-
-    def _next_month(self):
-        self._shift_month(1)
-
-    def _pick(self, d: date):
-        self.on_select(d.isoformat())
-        self.destroy()
-
-
-class _DateButton(ctk.CTkFrame):
-    """带日历弹窗的日期选择控件"""
-
-    def __init__(self, parent, **kwargs):
-        super().__init__(parent, fg_color="transparent", **kwargs)
-        self._value = ""
-        self._picker: _CalendarPicker | None = None
-
-        self._entry = ctk.CTkEntry(self, width=108, placeholder_text="YYYY-MM-DD",
-                                   font=("", 12))
-        self._entry.pack(side="left")
-        ctk.CTkButton(self, text="📅", width=28, height=28,
-                      font=("", 13), fg_color="transparent",
-                      hover_color=("gray80", "gray30"),
-                      command=self._open_picker).pack(side="left", padx=(2, 0))
-
-    def _open_picker(self):
-        if self._picker and self._picker.winfo_exists():
-            self._picker.destroy()
-            self._picker = None
-            return
-        current = self._entry.get().strip()
-        self._picker = _CalendarPicker(self._entry, on_select=self._on_select,
-                                       initial=current)
-        self._picker.focus_set()
-
-    def _on_select(self, date_str: str):
-        self._entry.delete(0, "end")
-        self._entry.insert(0, date_str)
-        self._picker = None
-
-    def get(self) -> str:
-        return self._entry.get().strip()
-
-    def clear(self):
-        self._entry.delete(0, "end")
 
 
 class DashboardView(ctk.CTkFrame):
@@ -174,11 +30,11 @@ class DashboardView(ctk.CTkFrame):
         filter_frame.pack(fill="x", padx=16, pady=(0, 8))
 
         ctk.CTkLabel(filter_frame, text="开始日期：", font=("", 12)).pack(side="left")
-        self._start_picker = _DateButton(filter_frame)
+        self._start_picker = DateButton(filter_frame)
         self._start_picker.pack(side="left", padx=(0, 12))
 
         ctk.CTkLabel(filter_frame, text="结束日期：", font=("", 12)).pack(side="left")
-        self._end_picker = _DateButton(filter_frame)
+        self._end_picker = DateButton(filter_frame)
         self._end_picker.pack(side="left", padx=(0, 12))
 
         ctk.CTkButton(filter_frame, text="查询", width=60, height=28,
@@ -186,23 +42,19 @@ class DashboardView(ctk.CTkFrame):
         ctk.CTkButton(filter_frame, text="全部", width=60, height=28,
                       command=self._clear_filter).pack(side="left")
 
-        # 汇总卡片
         self._summary_frame = ctk.CTkFrame(self, fg_color="transparent")
         self._summary_frame.pack(fill="x", padx=16, pady=(0, 8))
         self._summary_val_labels: list[tuple[str, ctk.CTkLabel]] = []
         self._build_summary_cards()
 
-        # 表头
         self._header_frame = ctk.CTkFrame(self, corner_radius=0,
                                           fg_color=("gray85", "gray25"))
         self._header_frame.pack(fill="x", padx=16)
         self._render_header()
 
-        # 数据区
         self._table = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self._table.pack(fill="both", expand=True, padx=16, pady=(0, 8))
 
-        # 分页
         page_frame = ctk.CTkFrame(self, fg_color="transparent")
         page_frame.pack(fill="x", padx=16, pady=(0, 12))
         self._prev_btn = ctk.CTkButton(page_frame, text="◀ 上一页", width=90, height=28,

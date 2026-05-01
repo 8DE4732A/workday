@@ -142,6 +142,31 @@ class TokenUsage:
         self.created_at = created_at or datetime.now()
 
 
+class AnalysisReport:
+    """分析报告模型"""
+    def __init__(
+        self,
+        id: Optional[int] = None,
+        scope: str = "",
+        period_key: str = "",
+        start_ts: int = 0,
+        end_ts: int = 0,
+        stats_json: str = "{}",
+        summary: str = "",
+        model: Optional[str] = None,
+        created_at: Optional[datetime] = None
+    ):
+        self.id = id
+        self.scope = scope
+        self.period_key = period_key
+        self.start_ts = start_ts
+        self.end_ts = end_ts
+        self.stats_json = stats_json
+        self.summary = summary
+        self.model = model
+        self.created_at = created_at or datetime.now()
+
+
 # 数据库初始化 SQL
 INIT_SQL = """
 -- 录制片段表
@@ -212,6 +237,20 @@ CREATE TABLE IF NOT EXISTS token_usage (
     FOREIGN KEY (batch_id) REFERENCES batches(id) ON DELETE SET NULL
 );
 
+-- 分析报告表
+CREATE TABLE IF NOT EXISTS analysis_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    period_key TEXT NOT NULL,
+    start_ts INTEGER NOT NULL,
+    end_ts INTEGER NOT NULL,
+    stats_json TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    model TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(scope, period_key)
+);
+
 -- 创建索引以提高查询性能
 CREATE INDEX IF NOT EXISTS idx_chunks_start_ts ON recording_chunks(start_ts);
 CREATE INDEX IF NOT EXISTS idx_chunks_status ON recording_chunks(status);
@@ -224,4 +263,5 @@ CREATE INDEX IF NOT EXISTS idx_timeline_start_ts ON timeline_cards(start_ts);
 CREATE INDEX IF NOT EXISTS idx_config_category ON config(category);
 CREATE INDEX IF NOT EXISTS idx_token_usage_created_at ON token_usage(created_at);
 CREATE INDEX IF NOT EXISTS idx_token_usage_batch_id ON token_usage(batch_id);
+CREATE INDEX IF NOT EXISTS idx_reports_period ON analysis_reports(scope, period_key);
 """

@@ -62,12 +62,13 @@ class WorkdayApp(ctk.CTk):
         items = [
             ("timeline", "时间线", "📋"),
             ("dashboard", "仪表盘", "📊"),
+            ("analysis", "分析", "📈"),
             ("settings", "设置", "⚙️"),
             ("guide", "指南", "📖"),
             ("about", "关于", "ℹ️"),
         ]
         if get_config().get("app.developer_mode", False):
-            items.insert(2, ("developer", "开发者", "🛠"))
+            items.insert(3, ("developer", "开发者", "🛠"))
         return items
 
     def _build(self):
@@ -192,6 +193,9 @@ class WorkdayApp(ctk.CTk):
         elif view_id == "dashboard":
             from workday.gui.views.dashboard import DashboardView
             return DashboardView(parent, db=self.db)
+        elif view_id == "analysis":
+            from workday.gui.views.analysis import AnalysisView
+            return AnalysisView(parent, db=self.db)
         elif view_id == "settings":
             from workday.gui.views.settings import SettingsView
             return SettingsView(parent, on_developer_toggle=self._on_developer_toggle)

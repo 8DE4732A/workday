@@ -2,6 +2,7 @@ import base64
 import json
 import re
 import urllib.request
+from typing import List, Tuple
 
 from openai import OpenAI
 
@@ -134,7 +135,45 @@ def transcribe_video(video_path: str, prompt: str, model: str = '') -> str:
     return result
 
 
-def generate_activity_cards(prompt: str, model: str = '') -> str:
+def chat_with_images(frames: List[Tuple[bytes, str]], prompt: str, model: str = '') -> str:
+    """图片模式下的 Stage 1 调用；frames 为 [(jpeg_bytes, 'HH:MM:SS'), ...]"""
+    cfg = get_config().llm
+    model = model or cfg.model
+    debug = get_config().analysis.debug_mode
+
+    logger.info(f"[chat_with_images] model={model}, frames={len(frames)}")
+    if debug:
+        logger.debug(f"[chat_with_images] prompt=\n{prompt}")
+
+    content = []
+    for jpeg_bytes, ts in frames:
+        b64 = base64.b64encode(jpeg_bytes).decode('utf-8')
+        content.append({"type": "text", "text": f"Frame at {ts}:"})
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+        })
+    content.append({"type": "text", "text": prompt})
+
+    client = get_client()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": content}],
+    )
+    result = response.choices[0].message.content or ""
+    usage = response.usage
+    if usage:
+        _record_token_usage(usage, 'chat_with_images', model)
+        logger.info(f"[chat_with_images] tokens: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
+
+    logger.debug(f"[chat_with_images] response length={len(result)}")
+    if debug:
+        logger.debug(f"[chat_with_images] response=\n{result}")
+
+    return clean_json_response(result)
+
+
+def generate_activity_cards(prompt: str, model: str = '', request_type: str = 'generate_activity_cards') -> str:
     """第二阶段：生成活动卡片 - 基于 Observations"""
     model = model or get_config().llm.model
     debug = get_config().analysis.debug_mode
@@ -151,7 +190,7 @@ def generate_activity_cards(prompt: str, model: str = '') -> str:
     content = response.choices[0].message.content or ""
     usage = response.usage
     if usage:
-        _record_token_usage(usage, 'generate_activity_cards', model)
+        _record_token_usage(usage, request_type, model)
         logger.info(f"[generate_activity_cards] tokens: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
 
     logger.debug(f"[generate_activity_cards] response length={len(content)}")
@@ -159,3 +198,8 @@ def generate_activity_cards(prompt: str, model: str = '') -> str:
         logger.debug(f"[generate_activity_cards] response=\n{content}")
 
     return clean_json_response(content)
+
+
+def generate_analysis_summary(prompt: str, model: str = '') -> str:
+    """生成分析报告摘要 - 纯文本 chat completion"""
+    return generate_activity_cards(prompt, model=model, request_type='analysis_report')

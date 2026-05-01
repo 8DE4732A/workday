@@ -34,6 +34,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/workday"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"docs" = "workday/docs"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

@@ -8,7 +8,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from workday.core.models import (
-    RecordingChunk, Batch, TimelineCard, Observation,
+    RecordingChunk, Batch, TimelineCard, Observation, AnalysisReport,
     ChunkStatus, BatchStatus, INIT_SQL
 )
 from workday.core.logger import get_logger
@@ -588,6 +588,70 @@ class Database:
             'total_tokens': row['total'],
             'count': row['count'],
         }
+
+    # ============ AnalysisReport 操作 ============
+
+    def insert_or_replace_analysis_report(self, report: AnalysisReport) -> int:
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO analysis_reports
+                    (scope, period_key, start_ts, end_ts, stats_json, summary, model)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope, period_key) DO UPDATE SET
+                    start_ts = excluded.start_ts,
+                    end_ts = excluded.end_ts,
+                    stats_json = excluded.stats_json,
+                    summary = excluded.summary,
+                    model = excluded.model,
+                    created_at = CURRENT_TIMESTAMP
+                """,
+                (report.scope, report.period_key, report.start_ts, report.end_ts,
+                 report.stats_json, report.summary, report.model)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_analysis_report(self, scope: str, period_key: str) -> Optional[AnalysisReport]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM analysis_reports WHERE scope = ? AND period_key = ?",
+                (scope, period_key)
+            ).fetchone()
+            if row:
+                return AnalysisReport(
+                    id=row['id'],
+                    scope=row['scope'],
+                    period_key=row['period_key'],
+                    start_ts=row['start_ts'],
+                    end_ts=row['end_ts'],
+                    stats_json=row['stats_json'],
+                    summary=row['summary'],
+                    model=row['model'],
+                    created_at=datetime.fromisoformat(row['created_at'])
+                )
+            return None
+
+    def delete_analysis_report(self, scope: str, period_key: str):
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM analysis_reports WHERE scope = ? AND period_key = ?",
+                (scope, period_key)
+            )
+            conn.commit()
+
+    def count_timeline_cards_for_period(self, scope: str, period_key: str) -> int:
+        from workday.services.analysis_report import _parse_day_range, _parse_week_range
+        if scope == "day":
+            start_ts, end_ts = _parse_day_range(period_key)
+        else:
+            start_ts, end_ts = _parse_week_range(period_key)
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM timeline_cards WHERE start_ts >= ? AND start_ts < ?",
+                (start_ts, end_ts)
+            ).fetchone()
+            return row['cnt'] if row else 0
 
     # ============ 数据清理操作 ============
 

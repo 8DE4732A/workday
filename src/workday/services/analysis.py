@@ -6,14 +6,14 @@ import json
 import time
 import threading
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
 
 from workday.core.config import get_config
 from workday.core.database import Database
 from workday.core.models import Batch, TimelineCard, Observation, ChunkStatus, BatchStatus
-from workday.services.llm_call import transcribe_video, generate_activity_cards
-from workday.services.prompts import get_transcription_prompt, get_activity_cards_prompt
+from workday.services.llm_call import transcribe_video, generate_activity_cards, chat_with_images
+from workday.services.prompts import get_transcription_prompt, get_activity_cards_prompt, get_transcription_prompt_images
 from workday.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -84,6 +84,13 @@ class AnalysisManager:
         if not chunks:
             return []
 
+        mode = get_config().get('analysis.recognition_mode', 'video')
+        if mode == 'image':
+            target_count = get_config().analysis.batch_duration
+            chunk_duration = get_config().recording.chunk_duration
+            chunks_per_batch = max(1, target_count // max(1, chunk_duration))
+            return [chunks[i:i + chunks_per_batch] for i in range(0, len(chunks), chunks_per_batch)]
+
         batches = []
         current_batch = [chunks[0]]
 
@@ -125,10 +132,14 @@ class AnalysisManager:
                     self.db.update_chunk_status(chunk.id, ChunkStatus.COMPLETED)
                 return
 
+            recognition_mode = get_config().get('analysis.recognition_mode', 'video')
+
             if len(video_chunks) == 1:
                 video_path = video_chunks[0].file_path
-            else:
+            elif recognition_mode != 'image':
                 video_path = self._merge_videos(video_chunks)
+            else:
+                video_path = video_chunks[0].file_path  # 图片模式不需要合并视频
 
             duration = end_ts - start_ts
             duration_string = f"{int(duration / 60):02d}:{int(duration % 60):02d}"
@@ -142,8 +153,13 @@ class AnalysisManager:
                     "description": f"[调试模式] 默认观察记录 - {datetime.fromtimestamp(start_ts).strftime('%H:%M')} - {datetime.fromtimestamp(end_ts).strftime('%H:%M')}"
                 }])
             else:
-                logger.info(f"[Stage 1] Transcribing batch {batch_id} ({duration_string})...")
-                response1 = transcribe_video(video_path, prompt1, self.model)
+                if recognition_mode == 'image':
+                    response1 = self._transcribe_batch_images(batch_id, video_chunks, start_ts, duration_string)
+                    if response1 is None:
+                        return
+                else:
+                    logger.info(f"[Stage 1] Transcribing batch {batch_id} ({duration_string})...")
+                    response1 = transcribe_video(video_path, prompt1, self.model)
 
             observations_data = self._parse_observations(response1, start_ts)
 
@@ -437,6 +453,68 @@ class AnalysisManager:
 
     def _format_timestamp(self, ts: int) -> str:
         return datetime.fromtimestamp(ts).strftime("%I:%M %p").lstrip('0')
+
+    def _transcribe_batch_images(self, batch_id: int, video_chunks: List, start_ts: int, duration_string: str) -> Optional[str]:
+        """图片模式下的 Stage 1：抽帧去重后送图片列表给 LLM，返回 response 字符串，出错或无帧返回 None"""
+        frames = self._extract_frames_from_chunks(video_chunks)
+        logger.info(f"[Stage 1] Batch {batch_id}: image mode, extracted {len(frames)} deduped frames")
+        if not frames:
+            logger.info(f"[Stage 1] Batch {batch_id}: all frames deduped, marking TRANSCRIBED with no observations")
+            self.db.update_batch_status(batch_id, BatchStatus.TRANSCRIBED)
+            for chunk in video_chunks:
+                self.db.update_chunk_status(chunk.id, ChunkStatus.COMPLETED)
+            return None
+
+        frames_with_ts = [
+            (jpeg_bytes, datetime.fromtimestamp(ts).strftime("%H:%M:%S"))
+            for jpeg_bytes, ts in frames
+        ]
+        prompt = get_transcription_prompt_images(duration_string, len(frames_with_ts))
+        logger.info(f"[Stage 1] Transcribing batch {batch_id} via images ({duration_string}, {len(frames_with_ts)} frames)...")
+        return chat_with_images(frames_with_ts, prompt, self.model)
+
+    def _extract_frames_from_chunks(self, chunks: List) -> List[Tuple[bytes, int]]:
+        """从 chunk 视频文件中逐帧抽取并去重，返回 [(jpeg_bytes, absolute_timestamp_int), ...]"""
+        import cv2
+        import numpy as np
+
+        threshold = get_config().recording.static_diff_threshold
+        results: List[Tuple[bytes, int]] = []
+        prev_small_gray = None
+
+        for chunk in chunks:
+            if not chunk.file_path:
+                continue
+            cap = cv2.VideoCapture(chunk.file_path)
+            if not cap.isOpened():
+                logger.warning(f"[extract_frames] Cannot open {chunk.file_path}")
+                continue
+
+            fps = cap.get(cv2.CAP_PROP_FPS) or 1.0
+            frame_idx = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                abs_ts = int(chunk.start_ts + frame_idx / fps)
+                frame_idx += 1
+
+                small = cv2.resize(frame, (64, 36))
+                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+                if prev_small_gray is not None:
+                    diff = float(np.mean(np.abs(gray - prev_small_gray)))
+                    if diff < threshold:
+                        continue
+
+                prev_small_gray = gray
+                ok, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ok:
+                    results.append((buf.tobytes(), abs_ts))
+
+            cap.release()
+
+        return results
 
     def _merge_videos(self, chunks: List) -> str:
         import cv2

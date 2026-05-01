@@ -57,6 +57,7 @@ class SettingsView(ctk.CTkScrollableFrame):
         self._on_developer_toggle = on_developer_toggle
         self._widgets: Dict[str, Any] = {}
         self._monitor_options: list[str] = []
+        self._batch_duration_label: Optional[ctk.CTkLabel] = None
         self._build()
         self._load()
 
@@ -68,25 +69,7 @@ class SettingsView(ctk.CTkScrollableFrame):
 
         self._build_llm_section()
         self._build_recording_section()
-        self._add_section("分析设置", [
-            ("analysis.interval", "分析间隔（分钟）", "int",
-             "后台分析服务的轮询间隔。每隔此时长检查一次是否有新录制片段或待生成卡片。"),
-            ("analysis.batch_duration", "批次时长（分钟）", "int",
-             "将多个 15 秒录制片段合并为一个分析批次的时间窗口。窗口内的片段会拼接成一段视频后送入 Stage 1。"),
-            "--- Stage 1：视频转录",
-            ("analysis.card_window_minutes", "触发时间窗口（分钟）", "int",
-             "Stage 2 触发条件之一：最早待处理的 Observation 距现在超过此时长，则立即生成活动卡片，无需等待数量条件。"),
-            ("analysis.card_min_observations", "触发最少观察数", "int",
-             "Stage 2 触发条件之一：待处理的 Observation 数量达到此值，则立即生成活动卡片，无需等待时间条件。两个条件满足任一即触发。"),
-            "--- Stage 2：活动卡片生成",
-            ("analysis.context_window_minutes", "前序卡片时间窗口（分钟）", "int",
-             "生成活动卡片时，向模型提供的历史上下文范围。会查询当前批次开始时间往前此时长内已生成的活动卡片，帮助模型保持时间线连贯。"),
-            ("analysis.context_max_cards", "前序卡片最大数量", "int",
-             "历史上下文卡片的数量上限。与时间窗口取并集：时间窗口内的卡片和最近 N 张卡片都会被包含，避免长时间空闲后上下文为空。"),
-            "---",
-            ("analysis.debug_mode", "调试模式（跳过 LLM）", "bool",
-             "开启后跳过所有 LLM 调用，直接生成占位内容。用于调试界面和数据流，不消耗 Token。"),
-        ])
+        self._build_analysis_section()
         self._add_section("数据保留", [
             ("retention.days", "保留天数", "int"),
         ])
@@ -196,6 +179,31 @@ class SettingsView(ctk.CTkScrollableFrame):
         self._model_menu_frame.pack(fill="x", padx=12, pady=(0, 4))
         self._model_menu = None
 
+        # 识别模式
+        row4 = ctk.CTkFrame(frame, fg_color="transparent")
+        row4.pack(fill="x", padx=12, pady=4)
+        ctk.CTkLabel(row4, text="识别模式", font=("", 12), width=180, anchor="w").pack(side="left")
+        self._mode_var = ctk.StringVar(value="视频模式")
+        mode_menu = ctk.CTkOptionMenu(
+            row4, variable=self._mode_var,
+            values=["视频模式", "图片模式"],
+            width=160,
+            command=self._on_mode_change,
+        )
+        mode_menu.pack(side="left")
+        btn = ctk.CTkButton(
+            row4, text="?", width=24, height=24,
+            font=("", 11), fg_color="transparent",
+            text_color=("gray50", "gray60"),
+            hover_color=("gray85", "gray25"),
+            border_width=1, border_color=("gray70", "gray40"),
+            corner_radius=12,
+        )
+        btn.pack(side="left", padx=(6, 0))
+        _Tooltip(btn, "视频模式：将多个片段合并为视频送入支持视频输入的模型（如豆包/Gemini）。\n"
+                      "图片模式：从片段中抽帧去重后以图片列表送入模型（适合 GPT-4o、Qwen-VL 等）。\n"
+                      "切换模式后「批次时长」字段的语义也会随之变化。")
+
     def _fetch_models(self):
         api_base_entry = self._widgets["llm.api_base"][1]
         api_base = api_base_entry.get().strip()
@@ -275,6 +283,103 @@ class SettingsView(ctk.CTkScrollableFrame):
             self._widgets[key] = (field_type, entry)
 
         self._refresh_monitors()
+
+    def _build_analysis_section(self):
+        frame = ctk.CTkFrame(self, corner_radius=8)
+        frame.pack(fill="x", padx=16, pady=6)
+
+        ctk.CTkLabel(frame, text="分析设置", font=("", 14, "bold")).pack(anchor="w", padx=12, pady=(10, 6))
+        ctk.CTkFrame(frame, height=1, fg_color=("gray80", "gray30")).pack(fill="x", padx=12)
+
+        def _row(label_text, key, tip=None):
+            row = ctk.CTkFrame(frame, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=4)
+            lbl = ctk.CTkLabel(row, text=label_text, font=("", 12), width=180, anchor="w")
+            lbl.pack(side="left")
+            entry = ctk.CTkEntry(row, width=260)
+            entry.pack(side="left")
+            self._widgets[key] = ("int", entry)
+            if tip:
+                btn = ctk.CTkButton(
+                    row, text="?", width=24, height=24,
+                    font=("", 11), fg_color="transparent",
+                    text_color=("gray50", "gray60"),
+                    hover_color=("gray85", "gray25"),
+                    border_width=1, border_color=("gray70", "gray40"),
+                    corner_radius=12,
+                )
+                btn.pack(side="left", padx=(6, 0))
+                _Tooltip(btn, tip)
+            return lbl
+
+        _row("分析间隔（分钟）", "analysis.interval",
+             "后台分析服务的轮询间隔。每隔此时长检查一次是否有新录制片段或待生成卡片。")
+
+        self._batch_duration_label = _row("批次时长（分钟）", "analysis.batch_duration",
+                                          "视频模式：将多个 15 秒片段合并为一批送视频给 Stage 1 的时间窗口（分钟）。\n"
+                                          "图片模式：每批送给 Stage 1 的目标图片张数。")
+
+        # Stage 1 分割线
+        divider_row = ctk.CTkFrame(frame, fg_color="transparent")
+        divider_row.pack(fill="x", padx=12, pady=(8, 2))
+        ctk.CTkFrame(divider_row, height=1, fg_color=("gray75", "gray35")).pack(
+            side="left", fill="x", expand=True, pady=6)
+        ctk.CTkLabel(divider_row, text="  Stage 1：视频转录  ", font=("", 11),
+                     text_color=("gray50", "gray55")).pack(side="left")
+        ctk.CTkFrame(divider_row, height=1, fg_color=("gray75", "gray35")).pack(
+            side="left", fill="x", expand=True, pady=6)
+
+        _row("触发时间窗口（分钟）", "analysis.card_window_minutes",
+             "Stage 2 触发条件之一：最早待处理的 Observation 距现在超过此时长，则立即生成活动卡片，无需等待数量条件。")
+        _row("触发最少观察数", "analysis.card_min_observations",
+             "Stage 2 触发条件之一：待处理的 Observation 数量达到此值，则立即生成活动卡片，无需等待时间条件。两个条件满足任一即触发。")
+
+        # Stage 2 分割线
+        divider_row2 = ctk.CTkFrame(frame, fg_color="transparent")
+        divider_row2.pack(fill="x", padx=12, pady=(8, 2))
+        ctk.CTkFrame(divider_row2, height=1, fg_color=("gray75", "gray35")).pack(
+            side="left", fill="x", expand=True, pady=6)
+        ctk.CTkLabel(divider_row2, text="  Stage 2：活动卡片生成  ", font=("", 11),
+                     text_color=("gray50", "gray55")).pack(side="left")
+        ctk.CTkFrame(divider_row2, height=1, fg_color=("gray75", "gray35")).pack(
+            side="left", fill="x", expand=True, pady=6)
+
+        _row("前序卡片时间窗口（分钟）", "analysis.context_window_minutes",
+             "生成活动卡片时，向模型提供的历史上下文范围。会查询当前批次开始时间往前此时长内已生成的活动卡片，帮助模型保持时间线连贯。")
+        _row("前序卡片最大数量", "analysis.context_max_cards",
+             "历史上下文卡片的数量上限。与时间窗口取并集：时间窗口内的卡片和最近 N 张卡片都会被包含，避免长时间空闲后上下文为空。")
+
+        # 末尾分割线
+        divider_row3 = ctk.CTkFrame(frame, fg_color="transparent")
+        divider_row3.pack(fill="x", padx=12, pady=(8, 2))
+        ctk.CTkFrame(divider_row3, height=1, fg_color=("gray75", "gray35")).pack(
+            side="left", fill="x", expand=True, pady=6)
+
+        # 调试模式
+        row_debug = ctk.CTkFrame(frame, fg_color="transparent")
+        row_debug.pack(fill="x", padx=12, pady=4)
+        ctk.CTkLabel(row_debug, text="调试模式（跳过 LLM）", font=("", 12), width=180, anchor="w").pack(side="left")
+        var = ctk.BooleanVar()
+        ctk.CTkSwitch(row_debug, variable=var, text="").pack(side="left")
+        self._widgets["analysis.debug_mode"] = ("bool", var)
+        btn = ctk.CTkButton(
+            row_debug, text="?", width=24, height=24,
+            font=("", 11), fg_color="transparent",
+            text_color=("gray50", "gray60"),
+            hover_color=("gray85", "gray25"),
+            border_width=1, border_color=("gray70", "gray40"),
+            corner_radius=12,
+        )
+        btn.pack(side="left", padx=(6, 0))
+        _Tooltip(btn, "开启后跳过所有 LLM 调用，直接生成占位内容。用于调试界面和数据流，不消耗 Token。")
+
+    def _on_mode_change(self, value: str):
+        if self._batch_duration_label is None:
+            return
+        if value == "图片模式":
+            self._batch_duration_label.configure(text="分析图片批量数（张）")
+        else:
+            self._batch_duration_label.configure(text="批次时长（分钟）")
 
     def _refresh_monitors(self):
         try:
@@ -375,6 +480,11 @@ class SettingsView(ctk.CTkScrollableFrame):
             # 日志级别
             self._log_level_var.set(cfg.get("log.file_level", "WARNING"))
 
+            # 识别模式
+            recognition_mode = cfg.get("analysis.recognition_mode", "video")
+            self._mode_var.set("图片模式" if recognition_mode == "image" else "视频模式")
+            self._on_mode_change(self._mode_var.get())
+
             # 开发者模式
             dev_mode = cfg.get("app.developer_mode", False)
             self._dev_var.set(bool(dev_mode))
@@ -406,6 +516,10 @@ class SettingsView(ctk.CTkScrollableFrame):
             model_val = self._model_var.get().strip()
             if model_val:
                 cfg.set("llm.model", model_val)
+
+            # 识别模式
+            mode_val = "image" if self._mode_var.get() == "图片模式" else "video"
+            cfg.set("analysis.recognition_mode", mode_val)
 
             # 日志级别：保存并立即生效
             log_level = self._log_level_var.get()

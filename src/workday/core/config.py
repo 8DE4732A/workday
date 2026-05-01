@@ -3,7 +3,6 @@
 优先从数据库读取配置，支持运行时动态修改
 """
 import logging
-import os
 from pathlib import Path
 from typing import Any
 from dataclasses import dataclass
@@ -38,6 +37,7 @@ class AnalysisConfig:
     card_min_observations: int = 5
     context_window_minutes: int = 60
     context_max_cards: int = 10
+    recognition_mode: str = 'video'
 
 
 @dataclass
@@ -71,6 +71,7 @@ class Config:
         'recording.static_frame_ratio': ('float', 'recording', '静止帧比例阈值（0-1，超过则跳过 LLM）', 0.9, False),
         'analysis.interval': ('int', 'analysis', '分析间隔（分钟）', 15, False),
         'analysis.batch_duration': ('int', 'analysis', '批次时长（分钟）', 15, False),
+        'analysis.recognition_mode': ('string', 'analysis', '模型识别方式 (video/image)', 'video', False),
         'analysis.debug_mode': ('bool', 'analysis', '调试模式（不调用LLM，生成默认总结）', False, False),
         'analysis.card_window_minutes': ('int', 'analysis', 'Stage2 触发时间窗口（分钟，积累满此时长则生成活动卡片）', 15, False),
         'analysis.card_min_observations': ('int', 'analysis', 'Stage2 触发最少 Observations 数量', 5, False),
@@ -115,8 +116,6 @@ class Config:
 
     def _resolve_value(self, key: str, value: Any) -> Any:
         """将 schema 默认值替换为运行时实际路径"""
-        if key == 'llm.api_key':
-            return os.getenv('ARK_API_KEY', '') or value
         if key == 'recording.output_dir':
             return self._default_recordings_dir
         if key == 'database.path':
@@ -212,6 +211,7 @@ class Config:
             card_min_observations=self.get('analysis.card_min_observations', 5),
             context_window_minutes=self.get('analysis.context_window_minutes', 60),
             context_max_cards=self.get('analysis.context_max_cards', 10),
+            recognition_mode=self.get('analysis.recognition_mode', 'video'),
         )
 
     @property
