@@ -527,6 +527,8 @@ class Database:
             ]
 
     def get_token_usage_records(self, date: Optional[str] = None,
+                                start_date: Optional[str] = None,
+                                end_date: Optional[str] = None,
                                 limit: int = 100, offset: int = 0) -> List[dict]:
         with self._get_conn() as conn:
             if date:
@@ -538,6 +540,16 @@ class Database:
                     LIMIT ? OFFSET ?
                     """,
                     (date, limit, offset)
+                ).fetchall()
+            elif start_date and end_date:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM token_usage
+                    WHERE DATE(created_at) BETWEEN ? AND ?
+                    ORDER BY created_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (start_date, end_date, limit, offset)
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -562,14 +574,65 @@ class Database:
                 for row in rows
             ]
 
-    def get_token_usage_count(self, date: Optional[str] = None) -> int:
+    def get_token_usage_count(self, date: Optional[str] = None,
+                              start_date: Optional[str] = None,
+                              end_date: Optional[str] = None) -> int:
         with self._get_conn() as conn:
             if date:
                 return conn.execute(
                     "SELECT COUNT(*) FROM token_usage WHERE DATE(created_at) = ?",
                     (date,)
                 ).fetchone()[0]
+            elif start_date and end_date:
+                return conn.execute(
+                    "SELECT COUNT(*) FROM token_usage WHERE DATE(created_at) BETWEEN ? AND ?",
+                    (start_date, end_date)
+                ).fetchone()[0]
             return conn.execute("SELECT COUNT(*) FROM token_usage").fetchone()[0]
+
+    def get_token_usage_summary(self, date: Optional[str] = None,
+                                start_date: Optional[str] = None,
+                                end_date: Optional[str] = None) -> dict:
+        """返回指定条件下的 token 汇总"""
+        with self._get_conn() as conn:
+            if date:
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(SUM(prompt_tokens),0) AS prompt,
+                           COALESCE(SUM(completion_tokens),0) AS completion,
+                           COALESCE(SUM(total_tokens),0) AS total,
+                           COUNT(*) AS count
+                    FROM token_usage WHERE DATE(created_at) = ?
+                    """,
+                    (date,)
+                ).fetchone()
+            elif start_date and end_date:
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(SUM(prompt_tokens),0) AS prompt,
+                           COALESCE(SUM(completion_tokens),0) AS completion,
+                           COALESCE(SUM(total_tokens),0) AS total,
+                           COUNT(*) AS count
+                    FROM token_usage WHERE DATE(created_at) BETWEEN ? AND ?
+                    """,
+                    (start_date, end_date)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(SUM(prompt_tokens),0) AS prompt,
+                           COALESCE(SUM(completion_tokens),0) AS completion,
+                           COALESCE(SUM(total_tokens),0) AS total,
+                           COUNT(*) AS count
+                    FROM token_usage
+                    """
+                ).fetchone()
+            return {
+                'prompt_tokens': row['prompt'],
+                'completion_tokens': row['completion'],
+                'total_tokens': row['total'],
+                'count': row['count'],
+            }
 
     # ============ 数据清理操作 ============
 
