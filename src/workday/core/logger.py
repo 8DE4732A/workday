@@ -95,13 +95,22 @@ class LogManager:
         self.logger.info("=== Workday Application Started ===")
 
     def _load_file_log_level(self) -> int:
-        """从配置读取文件日志级别，失败时默认 WARNING"""
+        """直接查 SQLite 读取日志级别，避免循环导入"""
         try:
-            from workday.core.config import get_config
-            level_name = get_config().get('log.file_level', 'WARNING')
-            return getattr(logging, str(level_name).upper(), logging.WARNING)
+            from platformdirs import user_data_dir
+            import sqlite3
+            db_path = Path(user_data_dir("workday", appauthor=False)) / "workday.db"
+            if not db_path.exists():
+                return logging.WARNING
+            with sqlite3.connect(str(db_path)) as conn:
+                row = conn.execute(
+                    "SELECT value FROM config WHERE key = 'log.file_level'"
+                ).fetchone()
+                if row:
+                    return getattr(logging, row[0].upper(), logging.WARNING)
         except Exception:
-            return logging.WARNING
+            pass
+        return logging.WARNING
 
     def set_file_log_level(self, level_name: str):
         """动态修改文件日志级别"""
