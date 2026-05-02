@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "workday"
-version = "0.2.0"
+name = "workday-py"
+version = "0.1.0b1"
 description = "AI 驱动的工作时间追踪工具 - 自动记录屏幕活动并使用 AI 生成时间线"
 readme = "README.md"
 requires-python = ">=3.12"
